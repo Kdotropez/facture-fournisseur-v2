@@ -1,0 +1,217 @@
+.import-pdf {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.import-pdf__header {
+  margin-bottom: 1.5rem;
+}
+
+.import-pdf__header h2 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.5rem;
+  color: #1a1a1a;
+}
+
+.import-pdf__header p {
+  margin: 0;
+  color: #666;
+  font-size: 0.9rem;
+}
+
+.import-pdf__dropzone {
+  border: 2px dashed #d1d5db;
+  border-radius: 8px;
+  padding: 3rem 2rem;
+  text-align: center;
+  cursor: pointer;
+  transition: all 0.2s;
+  background: #f9fafb;
+  position: relative;
+}
+
+.import-pdf__dropzone:hover {
+  border-color: #3b82f6;
+  background: #eff6ff;
+}
+
+.import-pdf__dropzone--dragging {
+  border-color: #3b82f6;
+  background: #dbeafe;
+  transform: scale(1.02);
+}
+
+.import-pdf__icon {
+  color: #6b7280;
+  margin-bottom: 1rem;
+}
+
+.import-pdf__dropzone--dragging .import-pdf__icon {
+  color: #3b82f6;
+}
+
+.import-pdf__text {
+  color: #6b7280;
+  font-size: 1rem;
+  margin: 0;
+}
+
+.import-pdf__input {
+  position: absolute;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.import-pdf__files {
+  margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 1px solid #e5e7eb;
+}
+
+.import-pdf__files-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.import-pdf__files-header h3 {
+  margin: 0;
+  font-size: 1.1rem;
+  color: #1a1a1a;
+}
+
+.import-pdf__clear-btn {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #ef4444;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s;
+}
+
+.import-pdf__clear-btn:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.import-pdf__clear-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.import-pdf__fournisseur-select {
+  margin-bottom: 1rem;
+}
+
+.import-pdf__fournisseur-select label {
+  display: block;
+  margin-bottom: 0.5rem;
+  font-size: 0.9rem;
+  color: #374151;
+  font-weight: 500;
+}
+
+.import-pdf__fournisseur-select select {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 1rem;
+  background: white;
+  cursor: pointer;
+}
+
+.import-pdf__fournisseur-select select:disabled {
+  background: #f3f4f6;
+  cursor: not-allowed;
+}
+
+.import-pdf__file-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem 0;
+  max-height: 300px;
+  overflow-y: auto;
+}
+
+.import-pdf__file-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: #f9fafb;
+  border-radius: 6px;
+  margin-bottom: 0.5rem;
+}
+
+.import-pdf__file-name {
+  flex: 1;
+  font-size: 0.9rem;
+  color: #1a1a1a;
+  word-break: break-all;
+}
+
+.import-pdf__file-size {
+  font-size: 0.85rem;
+  color: #6b7280;
+}
+
+.import-pdf__remove-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  background: #ef4444;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.import-pdf__remove-btn:hover:not(:disabled) {
+  background: #dc2626;
+}
+
+.import-pdf__remove-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.import-pdf__actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.import-pdf__import-btn {
+  padding: 0.75rem 2rem;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.import-pdf__import-btn:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.import-pdf__import-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+
+

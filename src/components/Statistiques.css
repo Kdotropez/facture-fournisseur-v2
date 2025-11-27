@@ -1,0 +1,215 @@
+.statistiques {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.statistiques__header {
+  margin-bottom: 2rem;
+}
+
+.statistiques__header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: #1a1a1a;
+}
+
+.statistiques__cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  margin-bottom: 2rem;
+}
+
+.statistiques__card {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1.5rem;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  transition: all 0.2s;
+}
+
+.statistiques__card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.1);
+}
+
+.statistiques__card--primary {
+  background: linear-gradient(135deg, #3b82f6 0%, #2563eb 100%);
+  color: white;
+  border: none;
+}
+
+.statistiques__card--primary .statistiques__card-icon {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+.statistiques__card--primary .statistiques__card-label,
+.statistiques__card--primary .statistiques__card-value {
+  color: white;
+}
+
+.statistiques__card--highlight {
+  background: linear-gradient(135deg, #10b981 0%, #059669 100%);
+  color: white;
+  border: none;
+}
+
+.statistiques__card--highlight .statistiques__card-icon {
+  background: rgba(255, 255, 255, 0.2);
+  color: white;
+}
+
+.statistiques__card--highlight .statistiques__card-label,
+.statistiques__card--highlight .statistiques__card-value {
+  color: white;
+}
+
+.statistiques__card-icon {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 48px;
+  height: 48px;
+  background: #dbeafe;
+  color: #3b82f6;
+  border-radius: 8px;
+  flex-shrink: 0;
+}
+
+.statistiques__card-content {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  flex: 1;
+}
+
+.statistiques__card-label {
+  font-size: 0.85rem;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.statistiques__card-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: #1a1a1a;
+  font-variant-numeric: tabular-nums;
+}
+
+.statistiques__card-value--large {
+  font-size: 1.75rem;
+}
+
+.statistiques__section {
+  margin-top: 2rem;
+  padding-top: 2rem;
+  border-top: 2px solid #e5e7eb;
+}
+
+.statistiques__section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 1.5rem 0;
+  font-size: 1.25rem;
+  color: #1a1a1a;
+  font-weight: 600;
+}
+
+.statistiques__fournisseurs {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.statistiques__fournisseur-card {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1.5rem;
+  transition: all 0.2s;
+}
+
+.statistiques__fournisseur-card:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 2px 8px rgba(59, 130, 246, 0.1);
+}
+
+.statistiques__fournisseur-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  padding-bottom: 1rem;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.statistiques__fournisseur-name {
+  margin: 0;
+  font-size: 1.1rem;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.statistiques__fournisseur-count {
+  font-size: 0.85rem;
+  color: #6b7280;
+  background: #e5e7eb;
+  padding: 0.25rem 0.75rem;
+  border-radius: 12px;
+}
+
+.statistiques__fournisseur-totaux {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.statistiques__fournisseur-total {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.statistiques__fournisseur-total--ttc {
+  padding-top: 0.75rem;
+  margin-top: 0.5rem;
+  border-top: 1px solid #d1d5db;
+}
+
+.statistiques__fournisseur-total-label {
+  font-size: 0.9rem;
+  color: #6b7280;
+  font-weight: 500;
+}
+
+.statistiques__fournisseur-total-value {
+  font-size: 1rem;
+  font-weight: 600;
+  color: #1a1a1a;
+  font-variant-numeric: tabular-nums;
+}
+
+.statistiques__fournisseur-total--ttc .statistiques__fournisseur-total-value {
+  font-size: 1.2rem;
+  color: #3b82f6;
+}
+
+@media (max-width: 768px) {
+  .statistiques__cards {
+    grid-template-columns: 1fr;
+  }
+
+  .statistiques__fournisseurs {
+    grid-template-columns: 1fr;
+  }
+}
+
+
+

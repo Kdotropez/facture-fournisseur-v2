@@ -1,0 +1,210 @@
+.liste-fichiers {
+  background: white;
+  border-radius: 12px;
+  padding: 2rem;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+}
+
+.liste-fichiers__header {
+  margin-bottom: 2rem;
+}
+
+.liste-fichiers__header h3 {
+  margin: 0 0 0.5rem 0;
+  font-size: 1.5rem;
+  color: #1a1a1a;
+}
+
+.liste-fichiers__stats {
+  margin: 0 0 1rem 0;
+  color: #6b7280;
+  font-size: 0.9rem;
+}
+
+.liste-fichiers__filtres {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.liste-fichiers__select {
+  padding: 0.75rem 1rem;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  font-size: 1rem;
+  background: white;
+  cursor: pointer;
+  min-width: 200px;
+}
+
+.liste-fichiers__btn-tous {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.75rem 1.5rem;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 1rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.liste-fichiers__btn-tous:hover:not(:disabled) {
+  background: #2563eb;
+}
+
+.liste-fichiers__btn-tous:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.liste-fichiers__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 1rem;
+}
+
+.liste-fichiers__card {
+  background: #f9fafb;
+  border: 2px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1.25rem;
+  transition: all 0.2s;
+}
+
+.liste-fichiers__card:hover {
+  border-color: #3b82f6;
+  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.1);
+}
+
+.liste-fichiers__card--chargee {
+  background: #f0fdf4;
+  border-color: #86efac;
+}
+
+.liste-fichiers__card-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+}
+
+.liste-fichiers__badge {
+  padding: 0.25rem 0.75rem;
+  background: #dbeafe;
+  color: #1e40af;
+  border-radius: 12px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.liste-fichiers__card-body {
+  margin-bottom: 1rem;
+}
+
+.liste-fichiers__nom {
+  margin: 0 0 0.5rem 0;
+  font-weight: 600;
+  font-size: 1rem;
+  color: #1a1a1a;
+}
+
+.liste-fichiers__chemin {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.85rem;
+  color: #6b7280;
+  word-break: break-all;
+}
+
+.liste-fichiers__info {
+  margin: 0.5rem 0 0 0;
+  font-size: 0.8rem;
+  color: #3b82f6;
+  font-style: italic;
+}
+
+.liste-fichiers__card-footer {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.liste-fichiers__btn-charger {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  background: #3b82f6;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.liste-fichiers__btn-charger:hover {
+  background: #2563eb;
+}
+
+.liste-fichiers__status {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.9rem;
+  font-weight: 500;
+}
+
+.liste-fichiers__status--chargee {
+  color: #059669;
+}
+
+.liste-fichiers__status--chargement {
+  color: #3b82f6;
+}
+
+.liste-fichiers__spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.liste-fichiers__empty {
+  text-align: center;
+  padding: 3rem;
+  color: #6b7280;
+}
+
+.liste-fichiers__empty p {
+  margin-top: 1rem;
+  font-size: 1rem;
+}
+
+@media (max-width: 768px) {
+  .liste-fichiers__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .liste-fichiers__filtres {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .liste-fichiers__select {
+    width: 100%;
+  }
+}
+
+
