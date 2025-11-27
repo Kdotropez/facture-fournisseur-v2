@@ -27,25 +27,41 @@ export const parserItalesse: Parser = {
         textePDF = await extraireTextePDF(fichier);
       }
 
-      const numeroDocMatch = textePDF.match(/Numero\s+doc\.\/\s*Doc\. No\.\s+([A-Z0-9\/\-]+)/i);
-      const numero = (numeroDocMatch ? numeroDocMatch[1].trim() : nomFichier.replace(/\.[^.]+$/, '')).toUpperCase();
-
-      const extraireDateDepuisLabel = (regex: RegExp): Date | undefined => {
-        const match = textePDF.match(regex);
-        if (!match || !match[1]) return undefined;
-        const [jourStr, moisStr, anneeStr] = match[1].split(/[\/\-\.]/);
+      const convertirDate = (valeur?: string): Date | undefined => {
+        if (!valeur) return undefined;
+        const [jourStr, moisStr, anneeStr] = valeur.split(/[\/\-\.]/);
         const jour = parseInt(jourStr, 10);
         const mois = parseInt(moisStr, 10);
-        const annee = parseInt(anneeStr, 10);
+        let annee = parseInt(anneeStr, 10);
+        if (anneeStr.length === 2) {
+          annee = annee < 50 ? 2000 + annee : 1900 + annee;
+        }
         if (isNaN(jour) || isNaN(mois) || isNaN(annee)) {
           return undefined;
         }
         return new Date(annee, mois - 1, jour);
       };
 
-      const dateCommande = extraireDateDepuisLabel(/Data\s+doc\.\/\s*Date\s+(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/i);
-      const dateLivraison = extraireDateDepuisLabel(/Data\s+Cons\.\/\s*Delivery Date\s+(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/i);
-      const date = dateCommande || new Date();
+      const extraireDateProche = (labelRegex: RegExp): Date | undefined => {
+        const match = labelRegex.exec(textePDF);
+        if (!match || match.index === undefined) {
+          return undefined;
+        }
+        const startIndex = match.index + match[0].length;
+        const segment = textePDF.slice(startIndex, startIndex + 500);
+        const dateMatch = segment.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/);
+        if (!dateMatch) {
+          return undefined;
+        }
+        return convertirDate(dateMatch[1]);
+      };
+
+      const numeroDocMatch = textePDF.match(/Numero\s+doc\.\/\s*Doc\. No\.\s+([A-Z0-9\/\-]+)/i);
+      const numero = (numeroDocMatch ? numeroDocMatch[1].trim() : nomFichier.replace(/\.[^.]+$/, '')).toUpperCase();
+
+      const dateCommande = extraireDateProche(/Data\s+doc\.\/\s*Date/i);
+      const dateLivraison = extraireDateProche(/Data\s+Cons\.\s*\/\s*Delivery\s+Date/i);
+      const date = dateCommande || convertirDate(textePDF.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/)?.[1]) || new Date();
 
       const extraireTotal = (labelRegex: RegExp) => {
         const match = textePDF.match(labelRegex);
