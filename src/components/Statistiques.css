@@ -160,17 +160,6 @@
   gap: 1.5rem;
 }
 
-@media (min-width: 1024px) {
-  .statistiques__panels {
-    flex-direction: row;
-    align-items: flex-start;
-  }
-
-  .statistiques__panel:not(.statistiques__panel--full) {
-    flex: 1;
-  }
-}
-
 .statistiques__panel {
   background: #f9fafb;
   border: 1px solid #e5e7eb;

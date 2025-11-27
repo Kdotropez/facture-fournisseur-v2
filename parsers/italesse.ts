@@ -80,26 +80,46 @@ export const parserItalesse: Parser = {
 
       const logosConnus = [
         'SAINT TROPEZ',
+        'ST TROPEZ',
         'SAINTE MAXIME',
+        'STE MAXIME',
         'SAINT AYGULF',
+        'ST AYGULF',
         'PORT GRIMAUD',
+        'PORT COGOLIN',
         'CAVALAIRE',
         'LES ISSAMBRES',
         'CANNES',
         'GRIMAUD',
-        'RELAIS DES COCHES',
+        'RAMATUELLE',
+        'LA CROIX VALMER',
+        'CROIX VALMER',
+        'SAINTE-MAXIME',
+        'PORT GRIMAUD 1',
+        'PORT GRIMAUD 2',
+        'GASSIN',
+        'UNI',
       ];
+
+      const normaliser = (texte: string) =>
+        texte
+          .normalize('NFD')
+          .replace(/[\u0300-\u036f]/g, '')
+          .replace(/[^A-Z0-9]/gi, ' ')
+          .replace(/\s+/g, ' ')
+          .trim()
+          .toUpperCase();
 
       const determinerLogo = (contenu?: string, fallback?: string): string | undefined => {
         const texte = contenu || fallback;
         if (!texte) return undefined;
         const guillemets = texte.match(/"([^"]+)"/);
         if (guillemets && guillemets[1].trim()) {
-          return guillemets[1].trim();
+          return guillemets[1].trim().toUpperCase();
         }
-        const upper = texte.toUpperCase();
-        const logoTrouve = logosConnus.find((nom) => upper.includes(nom));
-        return logoTrouve;
+        const normalise = normaliser(texte);
+        const logoTrouve = logosConnus.find((nom) => normalise.includes(normaliser(nom)));
+        return logoTrouve ? normaliser(logoTrouve) : undefined;
       };
 
       const nettoyerDescription = (texte: string): { description: string; logo?: string; bat?: string } => {
