@@ -41,6 +41,10 @@ export interface Facture {
   numero: string;
   /** Date de la facture */
   date: Date;
+  /** Date de commande (si distincte) */
+  dateCommande?: Date;
+  /** Date de livraison prévue ou constatée */
+  dateLivraison?: Date;
   /** Nom du fichier PDF source */
   fichierPDF?: string;
   /** Données encodées du PDF original (data URL) */

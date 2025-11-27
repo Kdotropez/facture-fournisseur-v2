@@ -6,7 +6,6 @@
 import type { Parser, ParserResult } from './types';
 import type { Facture, LigneProduit } from '../src/types/facture';
 import { extraireTextePDF } from '../src/utils/pdfParser';
-import { extracteurs } from '../src/utils/pdfParser';
 
 export const parserItalesse: Parser = {
   fournisseur: 'ITALESSE',
@@ -28,23 +27,25 @@ export const parserItalesse: Parser = {
         textePDF = await extraireTextePDF(fichier);
       }
 
-      // Extraction du numéro de facture
-      const numeroPatterns = [
-        /facture\s*n[°o]?\s*:?\s*([A-Z0-9\-]+)/i,
-        /n[°o]?\s*facture\s*:?\s*([A-Z0-9\-]+)/i,
-        /I\s*(\d+)/i,
-        /(\d+)/,
-      ];
-      const numero = extracteurs.extraireNumeroFacture(textePDF, numeroPatterns) || 
-                     nomFichier.match(/I(\d+)/i)?.[1] || 
-                     'INCONNU';
+      const numeroDocMatch = textePDF.match(/Numero\s+doc\.\/\s*Doc\. No\.\s+([A-Z0-9\/\-]+)/i);
+      const numero = (numeroDocMatch ? numeroDocMatch[1].trim() : nomFichier.replace(/\.[^.]+$/, '')).toUpperCase();
 
-      // Extraction de la date
-      const datePatterns = [
-        /data\s+doc\.\/\s*date\s+(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/i,
-        /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/,
-      ];
-      const date = extracteurs.extraireDate(textePDF, datePatterns) || new Date();
+      const extraireDateDepuisLabel = (regex: RegExp): Date | undefined => {
+        const match = textePDF.match(regex);
+        if (!match || !match[1]) return undefined;
+        const [jourStr, moisStr, anneeStr] = match[1].split(/[\/\-\.]/);
+        const jour = parseInt(jourStr, 10);
+        const mois = parseInt(moisStr, 10);
+        const annee = parseInt(anneeStr, 10);
+        if (isNaN(jour) || isNaN(mois) || isNaN(annee)) {
+          return undefined;
+        }
+        return new Date(annee, mois - 1, jour);
+      };
+
+      const dateCommande = extraireDateDepuisLabel(/Data\s+doc\.\/\s*Date\s+(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/i);
+      const dateLivraison = extraireDateDepuisLabel(/Data\s+Cons\.\/\s*Delivery Date\s+(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/i);
+      const date = dateCommande || new Date();
 
       const extraireTotal = (labelRegex: RegExp) => {
         const match = textePDF.match(labelRegex);
@@ -139,8 +140,10 @@ export const parserItalesse: Parser = {
       const facture: Facture = {
         id: `italesse-${numero}-${Date.now()}`,
         fournisseur: 'ITALESSE',
-        numero: numero.startsWith('I') ? numero : `I${numero}`,
+        numero,
         date,
+        dateCommande,
+        dateLivraison,
         fichierPDF: nomFichier,
         lignes,
         totalHT,
