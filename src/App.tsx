@@ -89,10 +89,12 @@ function App() {
       
       // Attendre que l'utilisateur sélectionne le fichier
       const fichier = await new Promise<File>((resolve, reject) => {
-        let timeoutId: NodeJS.Timeout;
+        let timeoutId: ReturnType<typeof setTimeout> | null = null;
         
         const cleanup = () => {
-          if (timeoutId) clearTimeout(timeoutId);
+          if (timeoutId) {
+            clearTimeout(timeoutId);
+          }
           if (input.parentNode) {
             input.parentNode.removeChild(input);
           }

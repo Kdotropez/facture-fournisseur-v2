@@ -3,7 +3,7 @@
  */
 
 import { useRef, useState, useCallback } from 'react';
-import { Upload, X, FileText, AlertCircle } from 'lucide-react';
+import { Upload, X, FileText } from 'lucide-react';
 import type { Fournisseur } from '../types/facture';
 import { obtenirFournisseurs } from '@parsers/index';
 import './ImportPDF.css';

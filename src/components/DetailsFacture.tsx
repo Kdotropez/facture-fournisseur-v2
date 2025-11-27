@@ -39,10 +39,6 @@ export function DetailsFacture({ facture, onClose }: DetailsFactureProps) {
     }).format(montant);
   };
 
-  const formaterPourcentage = (taux: number) => {
-    return `${(taux * 100).toFixed(0)}%`;
-  };
-
   const totalHTLignes = facture.lignes.reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0);
   const ecartHT = totalHTLignes - facture.totalHT;
   const totalTTCAttendu = facture.totalHT + facture.totalTVA;
@@ -53,6 +49,13 @@ export function DetailsFacture({ facture, onClose }: DetailsFactureProps) {
   const ecartTTCSignificatif = Math.abs(ecartTTC) > tolerance;
 
   const verificationOK = !ecartHTSignificatif && !ecartTTCSignificatif;
+  const texteBrut = facture.donneesBrutes
+    ? typeof facture.donneesBrutes.texteComplet === 'string'
+      ? facture.donneesBrutes.texteComplet
+      : typeof facture.donneesBrutes.texteExtrait === 'string'
+        ? facture.donneesBrutes.texteExtrait
+        : 'Aucun texte extrait'
+    : 'Aucun texte extrait';
 
   return (
     <div className="details-facture">
@@ -240,11 +243,11 @@ export function DetailsFacture({ facture, onClose }: DetailsFactureProps) {
                 <div className="details-facture__debug-section">
                   <h4>Texte extrait du PDF</h4>
                   <pre className="details-facture__debug-text">
-                    {facture.donneesBrutes.texteComplet || facture.donneesBrutes.texteExtrait || 'Aucun texte extrait'}
+                    {texteBrut}
                   </pre>
-                  {facture.donneesBrutes.texteComplet && (
+                    {typeof facture.donneesBrutes.texteComplet === 'string' && (
                     <p style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.5rem' }}>
-                      Longueur totale: {(facture.donneesBrutes.texteComplet as string).length} caractères
+                        Longueur totale: {facture.donneesBrutes.texteComplet.length} caractères
                     </p>
                   )}
                 </div>

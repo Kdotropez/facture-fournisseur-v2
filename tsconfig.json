@@ -18,7 +18,13 @@
     "strict": true,
     "noUnusedLocals": true,
     "noUnusedParameters": true,
-    "noFallthroughCasesInSwitch": true
+    "noFallthroughCasesInSwitch": true,
+    "baseUrl": ".",
+    "paths": {
+      "@parsers/*": ["parsers/*"],
+      "@/*": ["src/*"]
+    },
+    "types": ["vite/client"]
   },
   "include": ["src", "parsers"],
   "references": [{ "path": "./tsconfig.node.json" }]

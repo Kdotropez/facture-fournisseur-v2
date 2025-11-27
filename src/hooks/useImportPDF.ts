@@ -4,7 +4,7 @@
 
 import { useState, useCallback } from 'react';
 import type { Facture } from '../types/facture';
-import { parserFacture, detecterFournisseur } from '@parsers/index';
+import { parserFacture } from '@parsers/index';
 import type { Fournisseur } from '../types/facture';
 import { lireFichierEnDataURL } from '../utils/fileUtils';
 

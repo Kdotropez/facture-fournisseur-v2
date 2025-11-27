@@ -4,7 +4,7 @@
  */
 
 import type { Parser, ParserResult } from './types';
-import type { Facture, Fournisseur, LigneProduit } from '../src/types/facture';
+import type { Facture, LigneProduit } from '../src/types/facture';
 import { extraireTextePDF } from '../src/utils/pdfParser';
 import { extracteurs } from '../src/utils/pdfParser';
 
@@ -180,10 +180,6 @@ export const parserRBDrinks: Parser = {
       // Le pattern doit être plus flexible pour capturer les logos avec espaces (ex: "RELAIS TROPEZ")
       const patternLigneComplet = /([A-Z0-9\-]+)\s+(.+?)\s+(\d{4})\s+([A-Z\s]{3,})\s+([\d,]+)\s+([\d,]+\.\d{2})\s*€\s+([\d,]+\.\d{2})\s*€\s+([\d,]+\.\d{2})\s*€/gi;
       
-      // Pattern 2: Lignes sans BAT/LOGO (autres lignes simples)
-      // Format: REF   Description   Qté   PU HT   Remise   Montant HT
-      const patternLigneSimple = /([A-Z0-9\-]+)\s+(.+?)\s+([\d,]+)\s+([\d,]+\.\d{2})\s*€\s+([\d,]+\.\d{2})\s*€\s+([\d,]+\.\d{2})\s*€/gi;
-      
       let match;
       const lignesTrouvees = new Set<string>(); // Pour éviter les doublons basés sur l'index RegExp
       const clesDejaCapturees = new Set<string>(); // Pour éviter les doublons réels
@@ -355,7 +351,6 @@ export const parserRBDrinks: Parser = {
       const lignesSimples: Array<{ref: string, texte: string, index: number}> = [];
       const refPattern = /\b([A-Z0-9\-]+)\s+/g;
       let refMatch;
-      let dernierIndex = 0;
       
       // Chercher toutes les références dans le texte
       while ((refMatch = refPattern.exec(sectionTableau)) !== null) {
@@ -363,7 +358,6 @@ export const parserRBDrinks: Parser = {
         
         // Ignorer uniquement les références spéciales déjà capturées
         if (refsSpeciales.includes(ref) && refsSpecialesCapturees.has(ref)) {
-          dernierIndex = refMatch.index + refMatch[0].length;
           continue;
         }
         
@@ -371,13 +365,11 @@ export const parserRBDrinks: Parser = {
         // Ignorer aussi les nombres seuls (000, 736, 3, 1, 100, etc.) qui ne sont pas des références
         // Une référence valide doit contenir au moins une lettre ou être une référence spéciale
         if (/^\d{4}$/.test(ref) || /^[A-Z\s]+$/.test(ref) || /^\d{1,3}$/.test(ref)) {
-          dernierIndex = refMatch.index + refMatch[0].length;
           continue;
         }
         
         // Vérifier que la référence contient au moins une lettre (sauf pour les références spéciales déjà capturées)
         if (!ref.match(/[A-Za-z]/) && !refsSpeciales.includes(ref)) {
-          dernierIndex = refMatch.index + refMatch[0].length;
           continue;
         }
         
@@ -409,7 +401,11 @@ export const parserRBDrinks: Parser = {
           // Chercher la prochaine référence après le montant HT
           const texteApresMontant = texteApres.substring(finMontant);
           const prochaineRef = texteApresMontant.match(/\s+([A-Z0-9\-]+)\s+/);
-          finLigne = prochaineRef ? finMontant + prochaineRef.index : finMontant;
+          if (prochaineRef && prochaineRef.index !== undefined) {
+            finLigne = finMontant + prochaineRef.index;
+          } else {
+            finLigne = finMontant;
+          }
         }
         
         const texteLigne = texteApres.substring(0, finLigne).trim();
@@ -420,7 +416,6 @@ export const parserRBDrinks: Parser = {
           index: refMatch.index
         });
         
-        dernierIndex = refMatch.index + refMatch[0].length;
       }
       
       console.log('Lignes simples trouvées:', lignesSimples.length);

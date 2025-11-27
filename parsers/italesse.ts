@@ -4,7 +4,7 @@
  */
 
 import type { Parser, ParserResult } from './types';
-import type { Facture, Fournisseur, LigneProduit } from '../src/types/facture';
+import type { Facture, LigneProduit } from '../src/types/facture';
 import { extraireTextePDF } from '../src/utils/pdfParser';
 import { extracteurs } from '../src/utils/pdfParser';
 
@@ -83,33 +83,24 @@ export const parserItalesse: Parser = {
           const montantHT = parseFloat(match[4]?.replace(/\s/g, '').replace(',', '.') || '0');
           
           if (description && !description.match(/total|tva|ht|ttc|sous-total/i)) {
-            const tauxTVA = totalHT > 0 ? totalTVA / totalHT : 0.20;
-            const montantTVA = montantHT * tauxTVA;
-            const montantTTC = montantHT + montantTVA;
-            
             lignes.push({
               description,
               quantite,
               prixUnitaireHT: prixUnitaire,
-              tauxTVA,
+              remise: 0,
               montantHT,
-              montantTVA,
-              montantTTC,
             });
           }
         }
       }
 
       if (lignes.length === 0) {
-        const tauxTVA = totalHT > 0 ? totalTVA / totalHT : 0.20;
         lignes.push({
           description: 'Produits ITALESSE',
           quantite: 1,
           prixUnitaireHT: totalHT,
-          tauxTVA,
+          remise: 0,
           montantHT: totalHT,
-          montantTVA: totalTVA,
-          montantTTC: totalTTC,
         });
         avertissements.push('Aucune ligne de produit détectée. Ligne par défaut créée.');
       }

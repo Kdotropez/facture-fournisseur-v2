@@ -23,6 +23,15 @@ export interface LigneProduit {
   montantHT: number;
 }
 
+export interface DonneesBrutesFacture {
+  texteExtrait?: string;
+  texteComplet?: string;
+  totalHTBrut?: number;
+  remise?: number;
+  netHT?: number;
+  [cle: string]: unknown;
+}
+
 export interface Facture {
   /** Identifiant unique de la facture */
   id: string;
@@ -47,7 +56,7 @@ export interface Facture {
   /** Date d'import */
   dateImport: Date;
   /** Données brutes du parsing (pour debug) */
-  donneesBrutes?: Record<string, unknown>;
+  donneesBrutes?: DonneesBrutesFacture;
 }
 
 export interface Statistiques {
