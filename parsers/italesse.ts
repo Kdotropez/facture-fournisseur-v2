@@ -46,64 +46,84 @@ export const parserItalesse: Parser = {
       ];
       const date = extracteurs.extraireDate(textePDF, datePatterns) || new Date();
 
-      // Extraction des totaux
-      const totalHTPatterns = [
-        /total\s*ht\s*:?\s*([\d\s,\.]+)/i,
-        /ht\s*total\s*:?\s*([\d\s,\.]+)/i,
-        /sous\s*total\s*ht\s*:?\s*([\d\s,\.]+)/i,
-      ];
-      const totalHT = extracteurs.extraireMontant(textePDF, totalHTPatterns) || 0;
+      const nettoyerNombreItalien = (valeur: string | undefined): number => {
+        if (!valeur) return 0;
+        const normalisee = valeur
+          .replace(/\s+/g, '')
+          .replace(/\./g, '')
+          .replace(',', '.');
+        const resultat = parseFloat(normalisee);
+        return isNaN(resultat) ? 0 : resultat;
+      };
 
-      const totalTVAPatterns = [
-        /tva\s*:?\s*([\d\s,\.]+)/i,
-        /total\s*tva\s*:?\s*([\d\s,\.]+)/i,
-      ];
-      const totalTVA = extracteurs.extraireMontant(textePDF, totalTVAPatterns) || 0;
-
-      const totalTTCPatterns = [
-        /total\s*ttc\s*:?\s*([\d\s,\.]+)/i,
-        /ttc\s*:?\s*([\d\s,\.]+)/i,
-        /total\s*:?\s*([\d\s,\.]+)/i,
-        /à\s*payer\s*:?\s*([\d\s,\.]+)/i,
-      ];
-      const totalTTC = extracteurs.extraireMontant(textePDF, totalTTCPatterns) || 
-                       (totalHT + totalTVA);
+      const extraireMontantItalien = (patterns: RegExp[]): number | null => {
+        for (const pattern of patterns) {
+          const match = textePDF.match(pattern);
+          if (match && match[1]) {
+            const montant = nettoyerNombreItalien(match[1]);
+            if (montant > 0) {
+              return montant;
+            }
+          }
+        }
+        return null;
+      };
 
       // Extraction des lignes de produits
       const lignes: LigneProduit[] = [];
-      
-      const lignesPattern = /(.+?)\s+(\d+(?:[.,]\d+)?)\s+([\d\s,\.]+)\s+([\d\s,\.]+)/g;
-      const matches = [...textePDF.matchAll(lignesPattern)];
-      
-      if (matches.length > 0) {
-        for (const match of matches.slice(0, 20)) {
-          const description = match[1]?.trim() || '';
-          const quantite = parseFloat(match[2]?.replace(',', '.') || '1');
-          const prixUnitaire = parseFloat(match[3]?.replace(/\s/g, '').replace(',', '.') || '0');
-          const montantHT = parseFloat(match[4]?.replace(/\s/g, '').replace(',', '.') || '0');
-          
-          if (description && !description.match(/total|tva|ht|ttc|sous-total/i)) {
-            lignes.push({
-              description,
-              quantite,
-              prixUnitaireHT: prixUnitaire,
-              remise: 0,
-              montantHT,
-            });
-          }
+      const lignePattern = /(\d[\d\.]*)\s+(\d+,\d+)\s+(\d[\d\.,]+)\s+(.+?)\s+(?:PZ\s+)?([A-Z0-9\/]+)\s+(\d{3})\s+([0-9,]+\+[0-9,]+\+[0-9,]+)\s*([A-Z]+)?/gi;
+      let ligneMatch: RegExpExecArray | null;
+
+      while ((ligneMatch = lignePattern.exec(textePDF)) !== null) {
+        const quantite = nettoyerNombreItalien(ligneMatch[1]);
+        const prixUnitaire = nettoyerNombreItalien(ligneMatch[2]);
+        const montantHT = nettoyerNombreItalien(ligneMatch[3]);
+        const descriptionBrute = ligneMatch[4]?.replace(/\s+/g, ' ').trim() || '';
+        const ref = ligneMatch[5]?.trim();
+        const couleur = ligneMatch[8]?.trim();
+
+        if (!ref || !descriptionBrute || quantite <= 0 || montantHT <= 0) {
+          continue;
         }
+
+        lignes.push({
+          description: descriptionBrute,
+          refFournisseur: ref,
+          logo: couleur && couleur !== '-' ? couleur : undefined,
+          quantite,
+          prixUnitaireHT: prixUnitaire,
+          remise: 0,
+          montantHT,
+        });
       }
 
       if (lignes.length === 0) {
+        avertissements.push('Aucune ligne de produit détectée. Ligne par défaut créée.');
         lignes.push({
           description: 'Produits ITALESSE',
           quantite: 1,
-          prixUnitaireHT: totalHT,
+          prixUnitaireHT: 0,
           remise: 0,
-          montantHT: totalHT,
+          montantHT: 0,
         });
-        avertissements.push('Aucune ligne de produit détectée. Ligne par défaut créée.');
       }
+
+      const totalHTLignes = lignes.reduce((sum, ligne) => sum + ligne.montantHT, 0);
+
+      const totalHTExtrait = extraireMontantItalien([
+        /Totale\s+imponibile\s*\/\s*Taxable amount\s+([\d\.\s,]+)/i,
+        /TOTALE\s+ORDINE\s*\/\s*TOTAL AMOUNT\s+([\d\.\s,]+)/i,
+      ]);
+      const totalTVAExtrait = extraireMontantItalien([
+        /Totale\s+IVA\s*\/\s*V\.A\.T\. amount\s+([\d\.\s,]+)/i,
+      ]);
+      const totalTTCExtrait = extraireMontantItalien([
+        /TOTALE\s+ORDINE\s*\/\s*TOTAL AMOUNT\s+([\d\.\s,]+)/i,
+      ]);
+
+      const totalHT = totalHTExtrait ?? totalHTLignes;
+      const totalTVA = totalTVAExtrait ?? 0;
+      const totalTTC = totalTTCExtrait ?? (totalHT + totalTVA);
 
       const facture: Facture = {
         id: `italesse-${numero}-${Date.now()}`,
