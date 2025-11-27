@@ -5,16 +5,9 @@
 
 import type { Fournisseur, Facture } from '../types/facture';
 
-export interface ParsingRule {
-  fournisseur: Fournisseur;
-  patternNumero?: string; // Pattern regex pour extraire le numéro de facture
-  exempleNumero?: string; // Exemple de numéro corrigé
-  corrections?: {
-    [key: string]: any; // Corrections spécifiques par fournisseur
-  };
-  dateDerniereUtilisation?: Date;
-  nombreUtilisations?: number;
-  // Nouvelles propriétés pour l'apprentissage
+export interface ProfilFacture {
+  identifiant: string; // Identifiant unique du profil (ex: "italesse-type1", "italesse-type2")
+  signature: string; // Signature du format (mots-clés, structure, etc.)
   reglesApprises?: {
     nettoyageDescription?: (description: string) => string;
     extractionReference?: (texte: string, ligne: any) => string;
@@ -32,6 +25,28 @@ export interface ParsingRule {
       champ: string;
     }>;
   };
+  modeleParsing?: {
+    numeroFacture?: string;
+    dateFacture?: string;
+    nombreLignes?: number;
+    structureLignes?: any[];
+    totalHT?: number;
+  };
+  dateDerniereUtilisation?: Date;
+  nombreUtilisations?: number;
+}
+
+export interface ParsingRule {
+  fournisseur: Fournisseur;
+  patternNumero?: string; // Pattern regex pour extraire le numéro de facture (général)
+  exempleNumero?: string; // Exemple de numéro corrigé
+  corrections?: {
+    [key: string]: any; // Corrections spécifiques par fournisseur
+  };
+  dateDerniereUtilisation?: Date;
+  nombreUtilisations?: number;
+  // Profils de factures différents pour le même fournisseur
+  profils?: ProfilFacture[];
 }
 
 const STORAGE_KEY = 'parsing-rules';
@@ -287,16 +302,50 @@ export function apprendreCorrections(
   fournisseur: Fournisseur,
   factureOriginale: Facture,
   factureCorrigee: Facture,
-  _texteBrut: string
+  texteBrut: string
 ): void {
   console.log(`[PARSING RULES] 🎓 Apprentissage des corrections pour ${fournisseur}...`);
   
   const regles = chargerReglesParsing();
-  const regleExistante = regles.get(fournisseur);
   
-  const reglesApprises: ParsingRule['reglesApprises'] = {
-    ...regleExistante?.reglesApprises,
-  };
+  // Générer la signature de la facture corrigée
+  const signature = genererSignatureFacture(factureCorrigee, texteBrut);
+  console.log(`[PARSING RULES] Signature de la facture corrigée: ${signature}`);
+  
+  // Initialiser les profils si nécessaire
+  let regle = regles.get(fournisseur);
+  if (!regle) {
+    regle = {
+      fournisseur,
+      profils: [],
+    };
+    regles.set(fournisseur, regle);
+  }
+  
+  if (!regle.profils) {
+    regle.profils = [];
+  }
+  
+  // Chercher un profil existant avec la même signature
+  let profil = regle.profils.find(p => p.signature === signature);
+  
+  if (!profil) {
+    // Créer un nouveau profil
+    const identifiant = `${fournisseur.toLowerCase().replace(/\s+/g, '-')}-type${regle.profils.length + 1}`;
+    profil = {
+      identifiant,
+      signature,
+      reglesApprises: {},
+      dateDerniereUtilisation: new Date(),
+      nombreUtilisations: 0,
+    };
+    regle.profils.push(profil);
+    console.log(`[PARSING RULES] 📝 Nouveau profil créé: ${identifiant}`);
+  } else {
+    console.log(`[PARSING RULES] 📝 Mise à jour du profil existant: ${profil.identifiant}`);
+  }
+  
+  const reglesApprises = profil.reglesApprises || {};
   
   // 1. Apprendre les corrections de numéro de facture
   if (factureOriginale.numero !== factureCorrigee.numero) {
@@ -416,31 +465,33 @@ export function apprendreCorrections(
     }
   });
   
-  // Mettre à jour la règle avec les apprentissages
-  const regleMiseAJour: ParsingRule = {
-    fournisseur,
-    ...regleExistante,
-    reglesApprises: {
-      ...reglesApprises,
-      transformations: [
-        ...(regleExistante?.reglesApprises?.transformations || []),
-        ...transformations,
-      ],
-    },
-    dateDerniereUtilisation: new Date(),
-    nombreUtilisations: (regleExistante?.nombreUtilisations || 0) + 1,
+  // Mettre à jour le profil avec les apprentissages
+  profil.reglesApprises = {
+    ...reglesApprises,
+    transformations: [
+      ...(profil.reglesApprises?.transformations || []),
+      ...transformations,
+    ],
   };
   
-  regles.set(fournisseur, regleMiseAJour);
+  profil.dateDerniereUtilisation = new Date();
+  profil.nombreUtilisations = (profil.nombreUtilisations || 0) + 1;
+  
+  // Mettre à jour la règle globale
+  regle.dateDerniereUtilisation = new Date();
+  regle.nombreUtilisations = (regle.nombreUtilisations || 0) + 1;
+  
+  regles.set(fournisseur, regle);
   sauvegarderReglesParsing(regles);
   
-  console.log(`[PARSING RULES] ✅ Règles apprises sauvegardées pour ${fournisseur}:`, {
+  console.log(`[PARSING RULES] ✅ Règles apprises sauvegardées pour ${fournisseur} (profil: ${profil.identifiant}):`, {
     descriptions: correctionsDescription.length,
     references: correctionsReference.length,
     bat: correctionsBAT.length,
     logos: correctionsLogo.length,
     montants: correctionsMontants.length,
     transformations: transformations.length,
+    nombreProfils: regle.profils.length,
   });
 }
 
@@ -467,18 +518,117 @@ function extrairePatternCommun(avant: string, apres: string): string | null {
 }
 
 /**
+ * Génère une signature pour identifier le format d'une facture
+ * Utilise des caractéristiques comme les mots-clés, la structure, etc.
+ */
+function genererSignatureFacture(facture: Facture, texteBrut: string): string {
+  const caracteristiques: string[] = [];
+  
+  // Mots-clés dans le texte brut
+  const texteUpper = texteBrut.toUpperCase();
+  if (texteUpper.includes('FATTURA RIEPILOGATIVA')) caracteristiques.push('fattura-riepilogativa');
+  if (texteUpper.includes('RELAIS DES COCHES')) caracteristiques.push('relais-coches');
+  if (texteUpper.includes('VELA BUCKET')) caracteristiques.push('vela-bucket');
+  if (texteUpper.includes('PROTOCOLLO')) caracteristiques.push('protocollo');
+  if (texteUpper.includes('MARQUAGE')) caracteristiques.push('marquage');
+  
+  // Structure de la facture
+  caracteristiques.push(`lignes-${facture.lignes.length}`);
+  
+  // Présence de certains champs
+  const aBAT = facture.lignes.some(l => l.bat);
+  const aLogo = facture.lignes.some(l => l.logo);
+  const aCouleur = facture.lignes.some(l => l.couleur);
+  
+  if (aBAT) caracteristiques.push('avec-bat');
+  if (aLogo) caracteristiques.push('avec-logo');
+  if (aCouleur) caracteristiques.push('avec-couleur');
+  
+  // Format du numéro
+  if (facture.numero.includes('/')) caracteristiques.push('numero-slash');
+  
+  return caracteristiques.sort().join('|');
+}
+
+/**
+ * Trouve le profil de facture le plus similaire
+ */
+function trouverProfilSimilaire(
+  regle: ParsingRule,
+  signature: string
+): ProfilFacture | null {
+  if (!regle.profils || regle.profils.length === 0) {
+    return null;
+  }
+  
+  // Calculer la similarité avec chaque profil
+  let meilleurProfil: ProfilFacture | null = null;
+  let meilleureSimilarite = 0;
+  
+  for (const profil of regle.profils) {
+    const similarite = calculerSimilarite(signature, profil.signature);
+    if (similarite > meilleureSimilarite) {
+      meilleureSimilarite = similarite;
+      meilleurProfil = profil;
+    }
+  }
+  
+  // Seuil de similarité : au moins 60% de correspondance
+  if (meilleureSimilarite >= 0.6) {
+    return meilleurProfil;
+  }
+  
+  return null;
+}
+
+/**
+ * Calcule la similarité entre deux signatures (Jaccard similarity)
+ */
+function calculerSimilarite(sig1: string, sig2: string): number {
+  const set1 = new Set(sig1.split('|'));
+  const set2 = new Set(sig2.split('|'));
+  
+  const intersection = new Set([...set1].filter(x => set2.has(x)));
+  const union = new Set([...set1, ...set2]);
+  
+  return intersection.size / union.size;
+}
+
+/**
  * Applique les règles apprises à une facture parsée
+ * Utilise le profil de facture le plus similaire
  */
 export function appliquerReglesApprises(
   fournisseur: Fournisseur,
-  facture: Facture
+  facture: Facture,
+  texteBrut?: string
 ): Facture {
   const regle = obtenirRegleParsing(fournisseur);
-  if (!regle?.reglesApprises) {
+  if (!regle) {
     return facture;
   }
   
-  const reglesApprises = regle.reglesApprises;
+  // Si pas de texte brut, on ne peut pas déterminer le profil
+  if (!texteBrut) {
+    console.log(`[PARSING RULES] Pas de texte brut pour déterminer le profil pour ${fournisseur}`);
+    return facture;
+  }
+  
+  // Générer la signature de la facture actuelle
+  const signature = genererSignatureFacture(facture, texteBrut);
+  console.log(`[PARSING RULES] Signature de la facture: ${signature}`);
+  
+  // Trouver le profil le plus similaire
+  const profil = trouverProfilSimilaire(regle, signature);
+  
+  if (!profil || !profil.reglesApprises) {
+    console.log(`[PARSING RULES] Aucun profil similaire trouvé pour ${fournisseur}`);
+    return facture;
+  }
+  
+  console.log(`[PARSING RULES] ✅ Profil "${profil.identifiant}" sélectionné pour ${fournisseur}`);
+  
+  const reglesApprises = profil.reglesApprises;
   let factureCorrigee = { ...facture };
   
   // Appliquer les transformations de description
@@ -506,6 +656,10 @@ export function appliquerReglesApprises(
       return ligneCorrigee;
     });
   }
+  
+  // Mettre à jour les statistiques du profil
+  profil.dateDerniereUtilisation = new Date();
+  profil.nombreUtilisations = (profil.nombreUtilisations || 0) + 1;
   
   return factureCorrigee;
 }

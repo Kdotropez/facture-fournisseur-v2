@@ -50,7 +50,21 @@ export async function parserFacture(
   
   // Appliquer les règles apprises si disponibles
   if (resultat.facture) {
-    const factureCorrigee = appliquerReglesApprises(fournisseur, resultat.facture);
+    // Extraire le texte brut pour déterminer le profil
+    let texteBrut: string | undefined;
+    try {
+      if (typeof fichier === 'string') {
+        // Si c'est un chemin, on ne peut pas extraire le texte ici
+        texteBrut = undefined;
+      } else {
+        texteBrut = await extraireTextePDF(fichier);
+      }
+    } catch (error) {
+      console.warn(`[PARSING RULES] Impossible d'extraire le texte brut pour déterminer le profil:`, error);
+      texteBrut = undefined;
+    }
+    
+    const factureCorrigee = appliquerReglesApprises(fournisseur, resultat.facture, texteBrut);
     
     // Si des corrections ont été appliquées, mettre à jour le résultat
     if (factureCorrigee !== resultat.facture) {
