@@ -62,6 +62,11 @@ function App() {
     setFactureSelectionnee(facture);
   };
 
+  const handleVoirFacture = (facture: Facture) => {
+    setFactureSelectionnee(facture);
+    setVueActive('factures');
+  };
+
   const handleCloseDetails = () => {
     setFactureSelectionnee(null);
   };
@@ -343,7 +348,11 @@ function App() {
 
         {vueActive === 'statistiques' && (
           <div className="app__statistiques">
-            <StatistiquesComponent statistiques={statistiques} />
+            <StatistiquesComponent
+              statistiques={statistiques}
+              factures={toutesLesFactures}
+              onVoirFacture={handleVoirFacture}
+            />
           </div>
         )}
 
