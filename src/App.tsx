@@ -28,7 +28,6 @@ function App() {
   const {
     factures,
     toutesLesFactures,
-    statistiques,
     termeRecherche,
     setTermeRecherche,
     fournisseurFiltre,
@@ -348,11 +347,7 @@ function App() {
 
         {vueActive === 'statistiques' && (
           <div className="app__statistiques">
-            <StatistiquesComponent
-              statistiques={statistiques}
-              factures={toutesLesFactures}
-              onVoirFacture={handleVoirFacture}
-            />
+            <StatistiquesComponent factures={toutesLesFactures} onVoirFacture={handleVoirFacture} />
           </div>
         )}
 

@@ -13,6 +13,8 @@ export interface LigneProduit {
   bat?: string;
   /** Logo - Nom du logo (optionnel) */
   logo?: string;
+  /** Variante / couleur (optionnel) */
+  couleur?: string;
   /** Quantité */
   quantite: number;
   /** Prix unitaire HT */

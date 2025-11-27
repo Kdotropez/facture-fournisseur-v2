@@ -45,12 +45,22 @@ export const parserItalesse: Parser = {
       const numeroDocMatch = textePDF.match(/Numero\s+doc\.\/\s*Doc\. No\.\s+([A-Z0-9\/\-]+)/i);
       const numero = (numeroDocMatch ? numeroDocMatch[1].trim() : nomFichier.replace(/\.[^.]+$/, '')).toUpperCase();
 
-      const toutesLesDates = Array.from(textePDF.matchAll(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/g))
-        .map(match => convertirDate(match[1]))
-        .filter((date): date is Date => !!date);
+      const extraireDateProche = (labelRegex: RegExp): Date | undefined => {
+        const match = labelRegex.exec(textePDF);
+        if (!match) {
+          return undefined;
+        }
+        if (match[1]) {
+          return convertirDate(match[1]);
+        }
+        const startIndex = match.index !== undefined ? match.index + match[0].length : 0;
+        const segment = textePDF.slice(startIndex, startIndex + 200);
+        const dateMatch = segment.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/);
+        return convertirDate(dateMatch?.[1]);
+      };
 
-      const date = toutesLesDates[0] || new Date();
-      const dateLivraison = toutesLesDates.find(d => date && d.getTime() !== date.getTime());
+      const date = extraireDateProche(/Data\s+doc\.\/\s*Date/i) || new Date();
+      const dateLivraison = extraireDateProche(/Data\s+Cons\.\s*\/\s*Delivery\s+Date/i);
 
       const extraireTotal = (labelRegex: RegExp) => {
         const match = textePDF.match(labelRegex);
@@ -68,6 +78,30 @@ export const parserItalesse: Parser = {
         return isNaN(resultat) ? 0 : resultat;
       };
 
+      const logosConnus = [
+        'SAINT TROPEZ',
+        'SAINTE MAXIME',
+        'SAINT AYGULF',
+        'PORT GRIMAUD',
+        'CAVALAIRE',
+        'LES ISSAMBRES',
+        'CANNES',
+        'GRIMAUD',
+        'RELAIS DES COCHES',
+      ];
+
+      const determinerLogo = (contenu?: string, fallback?: string): string | undefined => {
+        const texte = contenu || fallback;
+        if (!texte) return undefined;
+        const guillemets = texte.match(/"([^"]+)"/);
+        if (guillemets && guillemets[1].trim()) {
+          return guillemets[1].trim();
+        }
+        const upper = texte.toUpperCase();
+        const logoTrouve = logosConnus.find((nom) => upper.includes(nom));
+        return logoTrouve;
+      };
+
       const nettoyerDescription = (texte: string): { description: string; logo?: string; bat?: string } => {
         let clean = texte.replace(/\s+/g, ' ').trim();
         clean = clean.replace(/IDEM DERNIERE COMMANDE/gi, '').trim();
@@ -79,16 +113,18 @@ export const parserItalesse: Parser = {
           clean = clean.replace(batMatch[0], '').trim();
         }
 
-        let logo: string | undefined;
+        let logoBrut: string | undefined;
         const logoMatch = clean.match(/MARQUAGE.+/i);
         if (logoMatch) {
           const index = logoMatch.index || 0;
-          logo = clean.substring(index).trim();
+          logoBrut = clean.substring(index).trim();
           clean = clean.substring(0, index).trim();
         }
 
         const [nomProduit, ...rest] = clean.split(' BOITE DE ');
         const description = rest.length > 0 ? `${nomProduit.trim()} - BOITE DE ${rest.join(' BOITE DE ').trim()}` : clean;
+
+        const logo = determinerLogo(logoBrut, texte) || 'UNI';
 
         return { description, logo, bat };
       };
@@ -116,7 +152,8 @@ export const parserItalesse: Parser = {
           description,
           refFournisseur: ref,
           bat,
-          logo: couleur && couleur !== '-' ? couleur : logo,
+          logo,
+          couleur: couleur && couleur !== '-' ? couleur : undefined,
           quantite,
           prixUnitaireHT: prixUnitaire,
           remise: 0,
