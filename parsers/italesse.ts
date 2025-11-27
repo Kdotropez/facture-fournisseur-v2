@@ -41,10 +41,16 @@ export const parserItalesse: Parser = {
 
       // Extraction de la date
       const datePatterns = [
-        /date\s*:?\s*(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/i,
+        /data\s+doc\.\/\s*date\s+(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/i,
         /(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/,
       ];
       const date = extracteurs.extraireDate(textePDF, datePatterns) || new Date();
+
+      const extraireTotal = (labelRegex: RegExp) => {
+        const match = textePDF.match(labelRegex);
+        if (!match) return null;
+        return nettoyerNombreItalien(match[1]);
+      };
 
       const nettoyerNombreItalien = (valeur: string | undefined): number => {
         if (!valeur) return 0;
@@ -56,17 +62,29 @@ export const parserItalesse: Parser = {
         return isNaN(resultat) ? 0 : resultat;
       };
 
-      const extraireMontantItalien = (patterns: RegExp[]): number | null => {
-        for (const pattern of patterns) {
-          const match = textePDF.match(pattern);
-          if (match && match[1]) {
-            const montant = nettoyerNombreItalien(match[1]);
-            if (montant > 0) {
-              return montant;
-            }
-          }
+      const nettoyerDescription = (texte: string): { description: string; logo?: string; bat?: string } => {
+        let clean = texte.replace(/\s+/g, ' ').trim();
+        clean = clean.replace(/IDEM DERNIERE COMMANDE/gi, '').trim();
+
+        let bat: string | undefined;
+        const batMatch = clean.match(/PROTOCOLLO\s+N\.\s*([A-Z0-9\-\s]+)/i);
+        if (batMatch) {
+          bat = batMatch[1].trim();
+          clean = clean.replace(batMatch[0], '').trim();
         }
-        return null;
+
+        let logo: string | undefined;
+        const logoMatch = clean.match(/MARQUAGE.+/i);
+        if (logoMatch) {
+          const index = logoMatch.index || 0;
+          logo = clean.substring(index).trim();
+          clean = clean.substring(0, index).trim();
+        }
+
+        const [nomProduit, ...rest] = clean.split(' BOITE DE ');
+        const description = rest.length > 0 ? `${nomProduit.trim()} - BOITE DE ${rest.join(' BOITE DE ').trim()}` : clean;
+
+        return { description, logo, bat };
       };
 
       // Extraction des lignes de produits
@@ -86,10 +104,13 @@ export const parserItalesse: Parser = {
           continue;
         }
 
+        const { description, logo, bat } = nettoyerDescription(descriptionBrute);
+
         lignes.push({
-          description: descriptionBrute,
+          description,
           refFournisseur: ref,
-          logo: couleur && couleur !== '-' ? couleur : undefined,
+          bat,
+          logo: couleur && couleur !== '-' ? couleur : logo,
           quantite,
           prixUnitaireHT: prixUnitaire,
           remise: 0,
@@ -110,20 +131,10 @@ export const parserItalesse: Parser = {
 
       const totalHTLignes = lignes.reduce((sum, ligne) => sum + ligne.montantHT, 0);
 
-      const totalHTExtrait = extraireMontantItalien([
-        /Totale\s+imponibile\s*\/\s*Taxable amount\s+([\d\.\s,]+)/i,
-        /TOTALE\s+ORDINE\s*\/\s*TOTAL AMOUNT\s+([\d\.\s,]+)/i,
-      ]);
-      const totalTVAExtrait = extraireMontantItalien([
-        /Totale\s+IVA\s*\/\s*V\.A\.T\. amount\s+([\d\.\s,]+)/i,
-      ]);
-      const totalTTCExtrait = extraireMontantItalien([
-        /TOTALE\s+ORDINE\s*\/\s*TOTAL AMOUNT\s+([\d\.\s,]+)/i,
-      ]);
-
+      const totalHTExtrait = extraireTotal(/TOTALE\s+ORDINE\s*\/\s*TOTAL AMOUNT\s+([\d\.\s,]+)/i);
       const totalHT = totalHTExtrait ?? totalHTLignes;
-      const totalTVA = totalTVAExtrait ?? 0;
-      const totalTTC = totalTTCExtrait ?? (totalHT + totalTVA);
+      const totalTVA = 0;
+      const totalTTC = totalHT;
 
       const facture: Facture = {
         id: `italesse-${numero}-${Date.now()}`,
