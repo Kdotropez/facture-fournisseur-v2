@@ -27,12 +27,14 @@ interface LigneProduitDetail {
   quantite: number;
   montantHT: number;
   description: string;
+  couleur?: string;
 }
 
 interface ProduitStatsDetail {
   ref: string;
   description: string;
   logo?: string;
+  couleurs: Set<string>;
   quantiteTotale: number;
   montantHTTotal: number;
   lignes: LigneProduitDetail[];
@@ -42,7 +44,7 @@ type FournisseurProduits = Record<string, ProduitStatsDetail>;
 
 type SensTri = 'asc' | 'desc';
 type ColonneFournisseur = 'nom' | 'factures' | 'ht' | 'tva' | 'ttc';
-type ColonneProduit = 'ref' | 'description' | 'logo' | 'quantite' | 'montant' | 'dernier';
+type ColonneProduit = 'ref' | 'description' | 'logo' | 'couleur' | 'quantite' | 'montant' | 'dernier';
 type ColonneDetail = 'facture' | 'date' | 'quantite' | 'montant';
 
 const fournisseursInitial: Record<
@@ -186,6 +188,7 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
             ref,
             description: ligne.description,
             logo: ligne.logo,
+            couleurs: new Set<string>(),
             quantiteTotale: 0,
             montantHTTotal: 0,
             lignes: [],
@@ -199,6 +202,9 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
         if (!detail.logo && ligne.logo) {
           detail.logo = ligne.logo;
         }
+        if (ligne.couleur) {
+          detail.couleurs.add(ligne.couleur);
+        }
 
         detail.quantiteTotale += ligne.quantite;
         detail.montantHTTotal += ligne.montantHT;
@@ -209,6 +215,7 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
           quantite: ligne.quantite,
           montantHT: ligne.montantHT,
           description: ligne.description,
+          couleur: ligne.couleur,
         });
       });
     });
@@ -285,6 +292,8 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
             return produit.description;
           case 'logo':
             return produit.logo || '';
+          case 'couleur':
+            return produit.couleurs.size > 0 ? Array.from(produit.couleurs).join(', ') : '';
           case 'quantite':
             return produit.quantiteTotale;
           case 'montant':
@@ -530,6 +539,10 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
                     <th onClick={() => changerTri(triProduit, 'logo', setTriProduit)}>
                       Logo {renderTri(triProduit, 'logo')}
                     </th>
+                    <th onClick={() => changerTri(triProduit, 'couleur', setTriProduit)}>
+                      Couleur {renderTri(triProduit, 'couleur')}
+                    </th>
+                    <th>PU HT</th>
                     <th onClick={() => changerTri(triProduit, 'quantite', setTriProduit)}>
                       Quantité {renderTri(triProduit, 'quantite')}
                     </th>
@@ -544,6 +557,8 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
                 </thead>
                 <tbody>
                   {produitsTries.map((produit) => {
+                    const couleursAffichees =
+                      produit.couleurs.size > 0 ? Array.from(produit.couleurs).join(', ') : '-';
                     const derniereLigne = [...produit.lignes].sort(
                       (a, b) => b.date.getTime() - a.date.getTime()
                     )[0];
@@ -558,6 +573,12 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
                         <td>{produit.ref}</td>
                         <td>{produit.description}</td>
                         <td>{produit.logo || '-'}</td>
+                        <td>{couleursAffichees}</td>
+                        <td>
+                          {produit.quantiteTotale > 0
+                            ? formaterMontant(produit.montantHTTotal / produit.quantiteTotale)
+                            : '—'}
+                        </td>
                         <td>{produit.quantiteTotale}</td>
                         <td>{formaterMontant(produit.montantHTTotal)}</td>
                         <td>
@@ -580,7 +601,7 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
                   })}
                   {produitsTries.length === 0 && (
                     <tr>
-                      <td colSpan={fournisseurSelectionne === 'ITALESSE' ? 7 : 6} className="statistiques__empty">
+                      <td colSpan={fournisseurSelectionne === 'ITALESSE' ? 9 : 8} className="statistiques__empty">
                         Aucun produit ne correspond aux critères.
                       </td>
                     </tr>
@@ -589,7 +610,12 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
                 {produitsTries.length > 0 && (
                   <tfoot>
                     <tr>
-                      <td colSpan={3}>Total</td>
+                      <td colSpan={4}>Total</td>
+                      <td>
+                        {totalQuantiteProduits > 0
+                          ? formaterMontant(totalMontantProduits / totalQuantiteProduits)
+                          : '—'}
+                      </td>
                       <td>{totalQuantiteProduits}</td>
                       <td>{formaterMontant(totalMontantProduits)}</td>
                       <td colSpan={fournisseurSelectionne === 'ITALESSE' ? 2 : 1}></td>
@@ -622,6 +648,12 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
                 <span>Logo</span>
                 <strong>{produitDetail.logo || '-'}</strong>
               </div>
+              {produitDetail.couleurs.size > 0 && (
+                <div>
+                  <span>Couleur</span>
+                  <strong>{Array.from(produitDetail.couleurs).join(', ')}</strong>
+                </div>
+              )}
               {fournisseurSelectionne === 'ITALESSE' && (
                 <div>
                   <span>Traduction</span>
@@ -638,6 +670,7 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
                   <th onClick={() => changerTri(triDetail, 'date', setTriDetail)}>
                     Date {renderTri(triDetail, 'date')}
                   </th>
+                  <th>Couleur</th>
                   <th onClick={() => changerTri(triDetail, 'quantite', setTriDetail)}>
                     Quantité {renderTri(triDetail, 'quantite')}
                   </th>
@@ -654,6 +687,7 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
                     <tr key={`${ligne.id}-${ligne.numero}-${ligne.date.getTime()}`}>
                       <td>{ligne.numero}</td>
                       <td>{formaterDate(ligne.date)}</td>
+                      <td>{ligne.couleur || '-'}</td>
                       <td>{ligne.quantite}</td>
                       <td>{formaterMontant(ligne.montantHT)}</td>
                       <td>
@@ -670,7 +704,7 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
                 })}
                 {lignesDetailTriees.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="statistiques__empty">
+                    <td colSpan={6} className="statistiques__empty">
                       Aucune facture correspondante.
                     </td>
                   </tr>

@@ -11,13 +11,31 @@ import './ImportPDF.css';
 interface ImportPDFProps {
   onImport: (fichiers: File[], fournisseur?: Fournisseur) => Promise<void>;
   importEnCours?: boolean;
+  onFichiersChange?: (fichiers: File[]) => void;
+  fichiersSelectionnes?: File[];
 }
 
-export function ImportPDF({ onImport, importEnCours = false }: ImportPDFProps) {
+export function ImportPDF({ 
+  onImport, 
+  importEnCours = false,
+  onFichiersChange,
+  fichiersSelectionnes: fichiersExternes
+}: ImportPDFProps) {
   const [isDragging, setIsDragging] = useState(false);
   const [fichiersSelectionnes, setFichiersSelectionnes] = useState<File[]>([]);
   const [fournisseurSelectionne, setFournisseurSelectionne] = useState<Fournisseur | ''>('');
   const inputRef = useRef<HTMLInputElement>(null);
+  
+  // Utiliser les fichiers externes si fournis, sinon utiliser l'état local
+  const fichiersActuels = fichiersExternes || fichiersSelectionnes;
+  
+  // Notifier les changements de fichiers
+  const mettreAJourFichiers = useCallback((nouveauxFichiers: File[]) => {
+    if (!fichiersExternes) {
+      setFichiersSelectionnes(nouveauxFichiers);
+    }
+    onFichiersChange?.(nouveauxFichiers);
+  }, [fichiersExternes, onFichiersChange]);
 
   const handleDragEnter = useCallback((e: React.DragEvent) => {
     e.preventDefault();
@@ -46,9 +64,10 @@ export function ImportPDF({ onImport, importEnCours = false }: ImportPDFProps) {
     );
 
     if (fichiers.length > 0) {
-      setFichiersSelectionnes(prev => [...prev, ...fichiers]);
+      const nouveauxFichiers = [...fichiersActuels, ...fichiers];
+      mettreAJourFichiers(nouveauxFichiers);
     }
-  }, []);
+  }, [fichiersActuels, mettreAJourFichiers]);
 
   const handleFileSelect = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
     const fichiers = Array.from(e.target.files || []).filter(f =>
@@ -56,33 +75,35 @@ export function ImportPDF({ onImport, importEnCours = false }: ImportPDFProps) {
     );
 
     if (fichiers.length > 0) {
-      setFichiersSelectionnes(prev => [...prev, ...fichiers]);
+      const nouveauxFichiers = [...fichiersActuels, ...fichiers];
+      mettreAJourFichiers(nouveauxFichiers);
     }
-  }, []);
+  }, [fichiersActuels, mettreAJourFichiers]);
 
   const handleRemoveFile = useCallback((index: number) => {
-    setFichiersSelectionnes(prev => prev.filter((_, i) => i !== index));
-  }, []);
+    const nouveauxFichiers = fichiersActuels.filter((_, i) => i !== index);
+    mettreAJourFichiers(nouveauxFichiers);
+  }, [fichiersActuels, mettreAJourFichiers]);
 
   const handleImport = useCallback(async () => {
-    if (fichiersSelectionnes.length === 0) return;
+    if (fichiersActuels.length === 0) return;
 
     const fournisseur = fournisseurSelectionne || undefined;
-    await onImport(fichiersSelectionnes, fournisseur);
-    setFichiersSelectionnes([]);
+    await onImport(fichiersActuels, fournisseur);
+    mettreAJourFichiers([]);
     setFournisseurSelectionne('');
     if (inputRef.current) {
       inputRef.current.value = '';
     }
-  }, [fichiersSelectionnes, fournisseurSelectionne, onImport]);
+  }, [fichiersActuels, fournisseurSelectionne, onImport, mettreAJourFichiers]);
 
   const handleClear = useCallback(() => {
-    setFichiersSelectionnes([]);
+    mettreAJourFichiers([]);
     setFournisseurSelectionne('');
     if (inputRef.current) {
       inputRef.current.value = '';
     }
-  }, []);
+  }, [mettreAJourFichiers]);
 
   return (
     <div className="import-pdf">
@@ -113,10 +134,10 @@ export function ImportPDF({ onImport, importEnCours = false }: ImportPDFProps) {
         />
       </div>
 
-      {fichiersSelectionnes.length > 0 && (
+      {fichiersActuels.length > 0 && (
         <div className="import-pdf__files">
           <div className="import-pdf__files-header">
-            <h3>Fichiers sélectionnés ({fichiersSelectionnes.length})</h3>
+            <h3>Fichiers sélectionnés ({fichiersActuels.length})</h3>
             <button
               type="button"
               onClick={handleClear}
@@ -146,7 +167,7 @@ export function ImportPDF({ onImport, importEnCours = false }: ImportPDFProps) {
           </div>
 
           <ul className="import-pdf__file-list">
-            {fichiersSelectionnes.map((fichier, index) => (
+            {fichiersActuels.map((fichier, index) => (
               <li key={`${fichier.name}-${index}`} className="import-pdf__file-item">
                 <FileText size={20} />
                 <span className="import-pdf__file-name">{fichier.name}</span>
@@ -174,9 +195,9 @@ export function ImportPDF({ onImport, importEnCours = false }: ImportPDFProps) {
               type="button"
               onClick={handleImport}
               className="import-pdf__import-btn"
-              disabled={importEnCours || fichiersSelectionnes.length === 0}
+              disabled={importEnCours || fichiersActuels.length === 0}
             >
-              {importEnCours ? 'Import en cours...' : `Importer ${fichiersSelectionnes.length} fichier(s)`}
+              {importEnCours ? 'Import en cours...' : `Importer ${fichiersActuels.length} fichier(s)`}
             </button>
           </div>
         </div>

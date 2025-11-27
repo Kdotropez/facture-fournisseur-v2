@@ -2,7 +2,7 @@
  * Modèle de données normalisé pour les factures
  */
 
-export type Fournisseur = 'RB DRINKS' | 'LEHMANN F' | 'ITALESSE';
+export type Fournisseur = string; // Permet d'ajouter de nouveaux fournisseurs dynamiquement
 
 export interface LigneProduit {
   /** Description du produit */

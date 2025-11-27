@@ -3,7 +3,7 @@
  */
 
 import { useRef, useState } from 'react';
-import { FileText, BarChart3, Upload, Download, RotateCcw } from 'lucide-react';
+import { FileText, BarChart3, Upload, Download, RotateCcw, Edit } from 'lucide-react';
 import { useFactures } from './hooks/useFactures';
 import { useImportPDF } from './hooks/useImportPDF';
 import { ListeFactures } from './components/ListeFactures';
@@ -11,18 +11,20 @@ import { DetailsFacture } from './components/DetailsFacture';
 import { StatistiquesComponent } from './components/Statistiques';
 import { ImportPDF } from './components/ImportPDF';
 import { ListeFichiersDisponibles } from './components/ListeFichiersDisponibles';
+import { EditeurParsing } from './components/EditeurParsing';
 import type { Facture } from './types/facture';
 import type { Fournisseur } from './types/facture';
 import { parserFacture } from '@parsers/index';
 import './App.css';
 import { lireFichierEnDataURL } from './utils/fileUtils';
 
-type Vue = 'factures' | 'statistiques' | 'import';
+type Vue = 'factures' | 'statistiques' | 'import' | 'editeur';
 
 function App() {
   const [vueActive, setVueActive] = useState<Vue>('factures');
   const [factureSelectionnee, setFactureSelectionnee] = useState<Facture | null>(null);
   const [fichierEnChargement, setFichierEnChargement] = useState<string | null>(null);
+  const [fichierPourEditeur, setFichierPourEditeur] = useState<File | null>(null);
   const inputRestaurationRef = useRef<HTMLInputElement>(null);
 
   const {
@@ -66,6 +68,54 @@ function App() {
     setVueActive('factures');
   };
 
+  const handleImporterEditeur = async (facture: Facture) => {
+    // Vérifier si la facture existe déjà
+    const existeDeja = toutesLesFactures.some(
+      f => f.numero === facture.numero && f.fournisseur === facture.fournisseur
+    );
+
+    if (existeDeja) {
+      setErreur('Cette facture existe déjà');
+      return;
+    }
+
+    // Ajouter la facture
+    ajouterFacture(facture);
+    
+    // Basculer vers la vue factures et sélectionner la facture importée
+    setVueActive('factures');
+    setFactureSelectionnee(facture);
+    setErreur(null);
+  };
+
+  // Charger un fichier avec contrôle (éditeur)
+  const handleChargerAvecControle = async (chemin: string, _fournisseur: Fournisseur) => {
+    setErreur(null);
+    
+    try {
+      // Charger le fichier depuis le chemin public/
+      const nomFichier = chemin.split(/[/\\]/).pop() || chemin;
+      const cheminPublic = chemin.startsWith('/') ? chemin : `/${chemin}`;
+      
+      // Récupérer le fichier depuis le serveur
+      const response = await fetch(cheminPublic);
+      if (!response.ok) {
+        throw new Error(`Impossible de charger le fichier: ${response.statusText}`);
+      }
+      
+      const blob = await response.blob();
+      const fichier = new File([blob], nomFichier, { type: 'application/pdf' });
+      
+      // Stocker le fichier et le fournisseur pour l'éditeur
+      setFichierPourEditeur(fichier);
+      
+      // Basculer vers l'éditeur
+      setVueActive('editeur');
+    } catch (error) {
+      setErreur(`Erreur lors du chargement du fichier: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
+    }
+  };
+
   const handleCloseDetails = () => {
     setFactureSelectionnee(null);
   };
@@ -83,54 +133,22 @@ function App() {
     try {
       console.log('Début du chargement:', chemin, fournisseur);
       
-      // Dans une application web, on ne peut pas directement charger un fichier
-      // depuis le système de fichiers. On doit demander à l'utilisateur de le sélectionner.
-      // Créer un input file temporaire pour permettre la sélection
-      const input = document.createElement('input');
-      input.type = 'file';
-      input.accept = '.pdf';
-      input.style.display = 'none';
+      // Charger le fichier directement depuis le chemin public/
+      const nomFichier = chemin.split(/[/\\]/).pop() || chemin;
+      const cheminPublic = chemin.startsWith('/') ? chemin : `/${chemin}`;
       
-      // Attendre que l'utilisateur sélectionne le fichier
-      const fichier = await new Promise<File>((resolve, reject) => {
-        let timeoutId: ReturnType<typeof setTimeout> | null = null;
-        
-        const cleanup = () => {
-          if (timeoutId) {
-            clearTimeout(timeoutId);
-          }
-          if (input.parentNode) {
-            input.parentNode.removeChild(input);
-          }
-        };
-        
-        timeoutId = setTimeout(() => {
-          cleanup();
-          reject(new Error('Timeout: sélection de fichier annulée'));
-        }, 300000); // 5 minutes timeout
-        
-        input.onchange = (e) => {
-          cleanup();
-          const target = e.target as HTMLInputElement;
-          const file = target.files?.[0];
-          console.log('Fichier sélectionné:', file?.name);
-          if (file) {
-            resolve(file);
-          } else {
-            reject(new Error('Aucun fichier sélectionné'));
-          }
-        };
-        
-        // Ajouter l'input au DOM et déclencher le clic
-        document.body.appendChild(input);
-        console.log('Ouverture du dialogue de sélection de fichier...');
-        // Utiliser setTimeout pour s'assurer que l'input est bien dans le DOM
-        setTimeout(() => {
-          input.click();
-        }, 0);
-      });
-
-      console.log('Fichier sélectionné, début du parsing...', fichier.name);
+      console.log('Chargement du fichier depuis:', cheminPublic);
+      
+      // Récupérer le fichier depuis le serveur
+      const response = await fetch(cheminPublic);
+      if (!response.ok) {
+        throw new Error(`Impossible de charger le fichier: ${response.statusText}`);
+      }
+      
+      const blob = await response.blob();
+      const fichier = new File([blob], nomFichier, { type: 'application/pdf' });
+      
+      console.log('Fichier chargé, début du parsing...', fichier.name);
 
       // Parser le fichier sélectionné
       let resultat;
@@ -150,7 +168,6 @@ function App() {
       // Les erreurs seront gérées après l'ajout de la facture
 
       // Vérifier si la facture existe déjà (par nom de fichier)
-      const nomFichier = fichier.name;
       const existeDeja = toutesLesFactures.some(
         f => {
           const factureNom = f.fichierPDF?.split(/[/\\]/).pop() || f.fichierPDF || '';
@@ -292,6 +309,17 @@ function App() {
                 <Upload size={20} />
                 Importer
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setVueActive('editeur');
+                  setFactureSelectionnee(null);
+                }}
+                className={`app__nav-btn ${vueActive === 'editeur' ? 'app__nav-btn--active' : ''}`}
+              >
+                <Edit size={20} />
+                Éditeur
+              </button>
             </nav>
             <button
               type="button"
@@ -365,21 +393,97 @@ function App() {
               </p>
               <ListeFichiersDisponibles
                 onChargerFichier={handleChargerFichier}
+                onChargerAvecControle={handleChargerAvecControle}
                 facturesChargees={facturesChargees}
                 chargementEnCours={fichierEnChargement}
               />
             </div>
 
             <div className="app__import-section" style={{ marginTop: '3rem', paddingTop: '3rem', borderTop: '2px solid #e5e7eb' }}>
-              <h2 style={{ marginBottom: '1rem', fontSize: '1.25rem', color: '#1a1a1a' }}>
-                Importer de nouveaux fichiers PDF
-              </h2>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
+                <h2 style={{ margin: 0, fontSize: '1.25rem', color: '#1a1a1a' }}>
+                  Importer de nouveaux fichiers PDF
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setVueActive('editeur');
+                  }}
+                  style={{
+                    padding: '0.5rem 1rem',
+                    border: '1px solid #3b82f6',
+                    borderRadius: '6px',
+                    background: 'white',
+                    color: '#3b82f6',
+                    cursor: 'pointer',
+                    fontSize: '0.9rem',
+                    fontWeight: '500',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                  }}
+                  title="Passer par l'éditeur pour contrôler et corriger avant l'import"
+                >
+                  <Edit size={16} />
+                  Import avec contrôle
+                </button>
+              </div>
+              <div style={{ 
+                padding: '1rem', 
+                background: '#eff6ff', 
+                border: '1px solid #bfdbfe', 
+                borderRadius: '6px', 
+                marginBottom: '1.5rem',
+                fontSize: '0.9rem',
+                color: '#1e40af'
+              }}>
+                <strong>💡 Mode automatique :</strong> Les factures sont parsées automatiquement en utilisant les règles apprises lors de vos corrections précédentes. 
+                Pour un contrôle manuel et des corrections avant l'import, cliquez sur "Import avec contrôle" ci-dessus.
+              </div>
               <ImportPDF
                 onImport={handleImport}
                 importEnCours={importEnCours}
+                onFichiersChange={(fichiers) => {
+                  // Stocker le premier fichier pour l'éditeur
+                  setFichierPourEditeur(fichiers.length > 0 ? fichiers[0] : null);
+                }}
               />
             </div>
 
+            {erreur && (
+              <div className="app__error" style={{ marginTop: '1.5rem' }}>
+                <p>{erreur}</p>
+              </div>
+            )}
+          </div>
+        )}
+
+        {vueActive === 'editeur' && (
+          <div className="app__editeur">
+            <EditeurParsing 
+              onImporter={handleImporterEditeur}
+              fichierInitial={fichierPourEditeur || undefined}
+            />
+            {fichierPourEditeur && (
+              <button
+                type="button"
+                onClick={() => {
+                  setFichierPourEditeur(null);
+                  setVueActive('import');
+                }}
+                style={{
+                  marginTop: '1rem',
+                  padding: '0.5rem 1rem',
+                  border: '1px solid #6b7280',
+                  borderRadius: '6px',
+                  background: 'white',
+                  color: '#6b7280',
+                  cursor: 'pointer',
+                }}
+              >
+                Retour à l'import
+              </button>
+            )}
             {erreur && (
               <div className="app__error" style={{ marginTop: '1.5rem' }}>
                 <p>{erreur}</p>

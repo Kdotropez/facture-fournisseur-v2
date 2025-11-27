@@ -207,4 +207,134 @@
   }
 }
 
+.liste-fichiers__btn-ajouter {
+  padding: 0.5rem 1rem;
+  background: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: background 0.2s;
+}
+
+.liste-fichiers__btn-ajouter:hover {
+  background: #218838;
+}
+
+.liste-fichiers__ajout-manuel {
+  margin: 1.5rem 0;
+  padding: 1.5rem;
+  background: #f8f9fa;
+  border: 1px solid #dee2e6;
+  border-radius: 8px;
+}
+
+.liste-fichiers__ajout-manuel h4 {
+  margin: 0 0 1rem 0;
+  font-size: 1.1rem;
+  color: #1a1a1a;
+}
+
+.liste-fichiers__ajout-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  gap: 1rem;
+  align-items: end;
+}
+
+.liste-fichiers__ajout-form > div {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.liste-fichiers__ajout-form label {
+  font-weight: 500;
+  color: #333;
+  font-size: 0.9rem;
+}
+
+.liste-fichiers__input-ajout,
+.liste-fichiers__select-ajout {
+  padding: 0.75rem;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  font-size: 0.95rem;
+}
+
+.liste-fichiers__input-ajout:focus,
+.liste-fichiers__select-ajout:focus {
+  outline: none;
+  border-color: #007bff;
+  box-shadow: 0 0 0 2px rgba(0, 123, 255, 0.25);
+}
+
+.liste-fichiers__ajout-actions {
+  display: flex;
+  gap: 0.5rem;
+  grid-column: 1 / -1;
+  margin-top: 0.5rem;
+}
+
+.liste-fichiers__btn-confirmer {
+  padding: 0.75rem 1.5rem;
+  background: #28a745;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.liste-fichiers__btn-confirmer:hover {
+  background: #218838;
+}
+
+.liste-fichiers__btn-annuler {
+  padding: 0.75rem 1.5rem;
+  background: #6c757d;
+  color: white;
+  border: none;
+  border-radius: 4px;
+  font-size: 0.95rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.liste-fichiers__btn-annuler:hover {
+  background: #5a6268;
+}
+
+.liste-fichiers__spinner {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.liste-fichiers__message-scan {
+  margin: 1rem 0;
+  padding: 0.75rem 1rem;
+  background: #d1ecf1;
+  border: 1px solid #bee5eb;
+  border-radius: 4px;
+  color: #0c5460;
+  font-size: 0.9rem;
+  text-align: center;
+}
+
 

@@ -186,6 +186,7 @@ export function DetailsFacture({ facture, onClose }: DetailsFactureProps) {
                   <th>Description</th>
                   <th>BAT</th>
                   <th>Logo</th>
+                  <th>Couleur</th>
                   <th>Quantité</th>
                   <th>Prix unitaire HT</th>
                   <th>Remise</th>
@@ -199,6 +200,7 @@ export function DetailsFacture({ facture, onClose }: DetailsFactureProps) {
                     <td className="details-facture__cell-description">{ligne.description}</td>
                     <td className="details-facture__cell-bat">{ligne.bat || '-'}</td>
                     <td className="details-facture__cell-logo">{ligne.logo || '-'}</td>
+                    <td className="details-facture__cell-color">{ligne.couleur || '-'}</td>
                     <td className="details-facture__cell-number">{ligne.quantite}</td>
                     <td className="details-facture__cell-amount">{formaterMontant(ligne.prixUnitaireHT)}</td>
                     <td className="details-facture__cell-amount">{formaterMontant(ligne.remise)}</td>
