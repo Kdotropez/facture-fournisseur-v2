@@ -42,26 +42,15 @@ export const parserItalesse: Parser = {
         return new Date(annee, mois - 1, jour);
       };
 
-      const extraireDateProche = (labelRegex: RegExp): Date | undefined => {
-        const match = labelRegex.exec(textePDF);
-        if (!match || match.index === undefined) {
-          return undefined;
-        }
-        const startIndex = match.index + match[0].length;
-        const segment = textePDF.slice(startIndex, startIndex + 500);
-        const dateMatch = segment.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/);
-        if (!dateMatch) {
-          return undefined;
-        }
-        return convertirDate(dateMatch[1]);
-      };
-
       const numeroDocMatch = textePDF.match(/Numero\s+doc\.\/\s*Doc\. No\.\s+([A-Z0-9\/\-]+)/i);
       const numero = (numeroDocMatch ? numeroDocMatch[1].trim() : nomFichier.replace(/\.[^.]+$/, '')).toUpperCase();
 
-      const dateCommande = extraireDateProche(/Data\s+doc\.\/\s*Date/i);
-      const dateLivraison = extraireDateProche(/Data\s+Cons\.\s*\/\s*Delivery\s+Date/i);
-      const date = dateCommande || convertirDate(textePDF.match(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{4})/)?.[1]) || new Date();
+      const toutesLesDates = Array.from(textePDF.matchAll(/(\d{1,2}[\/\-\.]\d{1,2}[\/\-\.]\d{2,4})/g))
+        .map(match => convertirDate(match[1]))
+        .filter((date): date is Date => !!date);
+
+      const date = toutesLesDates[0] || new Date();
+      const dateLivraison = toutesLesDates.find(d => date && d.getTime() !== date.getTime());
 
       const extraireTotal = (labelRegex: RegExp) => {
         const match = textePDF.match(labelRegex);
@@ -158,7 +147,6 @@ export const parserItalesse: Parser = {
         fournisseur: 'ITALESSE',
         numero,
         date,
-        dateCommande,
         dateLivraison,
         fichierPDF: nomFichier,
         lignes,

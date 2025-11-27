@@ -20,7 +20,6 @@ export function chargerFactures(): Facture[] {
     return factures.map(f => ({
       ...f,
       date: new Date(f.date),
-      dateCommande: f.dateCommande ? new Date(f.dateCommande) : undefined,
       dateLivraison: f.dateLivraison ? new Date(f.dateLivraison) : undefined,
       dateImport: new Date(f.dateImport),
     }));

@@ -132,15 +132,6 @@ export function DetailsFacture({ facture, onClose }: DetailsFactureProps) {
                 <span className="details-facture__info-value">{formaterDate(facture.date)}</span>
               </div>
             </div>
-            {facture.dateCommande && (
-              <div className="details-facture__info-item">
-                <Calendar size={18} />
-                <div>
-                  <span className="details-facture__info-label">Date commande</span>
-                  <span className="details-facture__info-value">{formaterDate(facture.dateCommande)}</span>
-                </div>
-              </div>
-            )}
             {facture.dateLivraison && (
               <div className="details-facture__info-item">
                 <Calendar size={18} />
