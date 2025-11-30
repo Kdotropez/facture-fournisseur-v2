@@ -13,7 +13,9 @@ import {
   creerAcomptesPrevuAvecPourcentage,
   obtenirReglePaiement,
   obtenirReglementsFacture,
-  mettreAJourReglement
+  mettreAJourReglement,
+  detecterDoublons,
+  nettoyerDoublons
 } from '../services/reglementService';
 import { obtenirFournisseurs } from '@parsers/index';
 import './VueFournisseur.css';
@@ -847,6 +849,10 @@ export function VueFournisseur({
             setAfficherModalReglement(false);
             setFacturePourReglement(null);
           }}
+          onNettoyageEffectue={() => {
+            onFactureUpdate?.();
+            setForceUpdate(prev => prev + 1);
+          }}
           onFermer={() => {
             setAfficherModalReglement(false);
             setFacturePourReglement(null);
@@ -919,9 +925,10 @@ interface ModalReglementFactureProps {
   facture: Facture;
   onSauvegarder: (mode: 'existant' | 'prevu' | 'complet', datesReglement?: Record<string, string>) => void;
   onFermer: () => void;
+  onNettoyageEffectue?: () => void;
 }
 
-function ModalReglementFacture({ facture, onSauvegarder, onFermer }: ModalReglementFactureProps) {
+function ModalReglementFacture({ facture, onSauvegarder, onFermer, onNettoyageEffectue }: ModalReglementFactureProps) {
   const [mode, setMode] = useState<'existant' | 'prevu' | 'complet'>('complet');
   const [datesReglement, setDatesReglement] = useState<Record<string, string>>({});
   
@@ -929,6 +936,24 @@ function ModalReglementFacture({ facture, onSauvegarder, onFermer }: ModalReglem
   const reglementsEnAttente = reglements.filter(r => r.statut === 'en_attente');
   const reglementsPayes = reglements.filter(r => r.statut === 'paye');
   const etat = calculerEtatReglement(facture);
+  const detectionDoublons = detecterDoublons(facture);
+
+  // Styles unifiés pour l'affichage du statut (cohérent avec la vue fournisseur)
+  const getStyleStatut = (statut: 'non_regle' | 'partiel' | 'regle' | 'depasse') => {
+    switch (statut) {
+      case 'regle':
+        return { bg: '#d1fae5', text: '#059669', label: 'Réglé' };
+      case 'partiel':
+        return { bg: '#fef3c7', text: '#d97706', label: 'Partiel' };
+      case 'depasse':
+        return { bg: '#fce7f3', text: '#be185d', label: 'Dépassé' };
+      case 'non_regle':
+      default:
+        return { bg: '#fee2e2', text: '#dc2626', label: 'Non réglé' };
+    }
+  };
+
+  const styleStatut = getStyleStatut(etat.statut);
   
   // Calculer les acomptes prévus
   const regle = obtenirReglePaiement(facture.fournisseur);
@@ -1085,13 +1110,64 @@ function ModalReglementFacture({ facture, onSauvegarder, onFermer }: ModalReglem
                 borderRadius: '4px',
                 fontSize: '0.75rem',
                 fontWeight: 600,
-                backgroundColor: etat.statut === 'regle' ? '#d1fae5' : etat.statut === 'partiel' ? '#fef3c7' : '#fee2e2',
-                color: etat.statut === 'regle' ? '#059669' : etat.statut === 'partiel' ? '#d97706' : '#dc2626',
+                backgroundColor: styleStatut.bg,
+                color: styleStatut.text,
               }}
             >
-              {etat.statut === 'regle' ? 'Réglé' : etat.statut === 'partiel' ? 'Partiel' : 'Non réglé'}
+              {styleStatut.label}
             </span>
           </div>
+
+          {/* Alerte et nettoyage des doublons si trop-payé */}
+          {detectionDoublons.aDoublons && (
+            <div
+              style={{
+                marginTop: '0.75rem',
+                padding: '0.75rem',
+                background: '#fef2f2',
+                border: '1px solid #ef4444',
+                borderRadius: '6px',
+                fontSize: '0.85rem',
+              }}
+            >
+              <div style={{ marginBottom: '0.5rem', color: '#b91c1c', fontWeight: 600 }}>
+                ⚠️ Doublons détectés :{' '}
+                {formaterMontant(detectionDoublons.montantRegleBrut)} réglés au lieu de{' '}
+                {formaterMontant(
+                  typeof facture.totalTTC === 'number' && !isNaN(facture.totalTTC) ? facture.totalTTC : 0
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => {
+                  const resultat = nettoyerDoublons(facture);
+                  let message = '';
+                  if (resultat.reglementsSupprimes.length > 0) {
+                    message += `${resultat.reglementsSupprimes.length} règlement(s) en doublon supprimé(s).\n`;
+                  }
+                  if (resultat.reglementsAjustes.length > 0) {
+                    message += `${resultat.reglementsAjustes.length} règlement(s) ajusté(s).\n`;
+                  }
+                  if (message) {
+                    alert(message.trim());
+                  }
+                  onNettoyageEffectue?.();
+                }}
+                style={{
+                  padding: '0.5rem 1rem',
+                  background: '#ef4444',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '0.85rem',
+                  fontWeight: 600,
+                }}
+              >
+                Nettoyer les doublons
+              </button>
+            </div>
+          )}
           </div>
 
           {/* Liste des règlements existants */}
