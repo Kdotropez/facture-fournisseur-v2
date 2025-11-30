@@ -9,9 +9,8 @@ import { extraireTextePDF } from '../src/utils/pdfParser';
 import { extracteurs } from '../src/utils/pdfParser';
 import * as pdfjsLib from 'pdfjs-dist';
 import { 
-  obtenirDescriptionReference, 
-  memoriserReferenceFournisseur,
-  obtenirReferencesParFournisseur 
+  obtenirDescriptionReference,
+  obtenirReferencesParFournisseur,
 } from '../src/services/referencesFournisseurService';
 
 export const parserLehmann: Parser = {
@@ -21,6 +20,8 @@ export const parserLehmann: Parser = {
   parser: async (fichier: File | string): Promise<ParserResult> => {
     const erreurs: string[] = [];
     const avertissements: string[] = [];
+    // Nom du fournisseur extrait/normalisé, accessible aussi dans le bloc de secours (catch)
+    let nomFournisseur: string = 'LEHMANN F';
     
     try {
       let textePDF: string;
@@ -50,7 +51,6 @@ export const parserLehmann: Parser = {
 
       // Extraction du nom du fournisseur depuis le texte de la facture
       // Chercher des patterns comme "LEHMANN F", "LEHMANN FRERES", "LEHMANN FRÈRES", etc.
-      let nomFournisseur = 'LEHMANN F'; // Par défaut
       const fournisseurPatterns = [
         /LEHMANN\s+FR[ÈE]RES?/i,
         /LEHMANN\s+FR[ÈE]RE/i,
@@ -94,13 +94,6 @@ export const parserLehmann: Parser = {
         console.warn('[LEHMANN] Impossible d\'extraire les pages séparément, utilisation du texte complet');
         pages.push(textePDF);
       }
-
-      // Normaliser le texte : remplacer les espaces multiples et les retours à la ligne
-      const texteNormalise = textePDF
-        .replace(/\r\n/g, '\n')
-        .replace(/\r/g, '\n')
-        .replace(/\s+/g, ' ')
-        .trim();
 
       // Extraction du numéro de facture
       // Formats possibles : "FACTURE N° FA1", "FACTURE FA1", "FA 1", "FA1", "F1", etc.
@@ -226,7 +219,7 @@ export const parserLehmann: Parser = {
           console.log(`[LEHMANN] Aperçu:`, sectionLignes.substring(0, 300));
           
           // Utiliser les références connues pour améliorer l'extraction de la section
-          const sectionAmelioree = ameliorerSectionAvecReferences(sectionLignes, referencesConnues, mapReferencesDescriptions);
+          const sectionAmelioree = ameliorerSectionAvecReferences(sectionLignes, referencesConnues);
           
           const lignesExtraites = parserLignesDepuisSection(
             sectionAmelioree, 
@@ -242,13 +235,13 @@ export const parserLehmann: Parser = {
       // Si aucune ligne trouvée avec la méthode multi-pages, essayer avec le texte complet
       if (lignes.length === 0) {
         console.log('[LEHMANN] Aucune ligne trouvée page par page, tentative avec texte complet...');
-        const sectionLignes = extraireSectionLignes(textePDF, totalHT);
+        const sectionLignes = extraireSectionLignes(textePDF);
         
         if (sectionLignes) {
           console.log('[LEHMANN] Section lignes extraite:', sectionLignes.substring(0, 200));
           
           // Utiliser les références connues pour améliorer l'extraction de la section
-          const sectionAmelioree = ameliorerSectionAvecReferences(sectionLignes, referencesConnues, mapReferencesDescriptions);
+          const sectionAmelioree = ameliorerSectionAvecReferences(sectionLignes, referencesConnues);
           
           const lignesExtraites = parserLignesDepuisSection(
             sectionAmelioree, 
@@ -518,7 +511,7 @@ function extraireSectionLignesMultiPages(texte: string, estDernierePage: boolean
  * Extrait la section contenant les lignes de produits
  * Cherche entre l'en-tête et les totaux (méthode originale pour compatibilité)
  */
-function extraireSectionLignes(texte: string, totalHT: number): string | null {
+function extraireSectionLignes(texte: string): string | null {
   // Chercher des mots-clés qui indiquent le début du tableau
   const debutsPossibles = [
     /désignation/i,
@@ -589,7 +582,6 @@ function extraireSectionLignes(texte: string, totalHT: number): string | null {
 function ameliorerSectionAvecReferences(
   section: string,
   referencesConnues: Set<string>,
-  mapReferencesDescriptions: Map<string, string>
 ): string {
   // Si on a des références connues, chercher leur position dans le texte
   // pour mieux comprendre la structure

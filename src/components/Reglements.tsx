@@ -13,8 +13,6 @@ import {
   AlertCircle,
   Calendar,
   Euro,
-  Building2,
-  Filter
 } from 'lucide-react';
 import type { Facture } from '../types/facture';
 import type { 
@@ -716,23 +714,23 @@ export function Reglements({ factures }: ReglementsProps) {
                           </div>
                           <button
                             className="reglements__btn-marquer-acompte"
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              // Créer un règlement pour cet acompte et le marquer comme payé
-                              const nouveauReglement = ajouterReglement({
-                                factureId: facture.id,
-                                numeroFacture: facture.numero,
-                                fournisseur: facture.fournisseur,
-                                type: acompte.type === 'acompte' ? 'acompte' : 'solde',
-                                montant: acompte.montant,
-                                dateReglement: new Date(),
-                                dateEcheance: acompte.dateEcheance,
-                                statut: 'paye',
-                                modePaiement: 'virement',
-                                notes: `${acompte.type === 'acompte' ? 'Acompte' : 'Solde'} - ${formaterDate(acompte.dateEcheance)}`,
-                              });
-                              setReglements(chargerReglements());
-                            }}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            // Créer un règlement pour cet acompte et le marquer comme payé
+                            ajouterReglement({
+                              factureId: facture.id,
+                              numeroFacture: facture.numero,
+                              fournisseur: facture.fournisseur,
+                              type: acompte.type === 'acompte' ? 'acompte' : 'solde',
+                              montant: acompte.montant,
+                              dateReglement: new Date(),
+                              dateEcheance: acompte.dateEcheance,
+                              statut: 'paye',
+                              modePaiement: 'virement',
+                              notes: `${acompte.type === 'acompte' ? 'Acompte' : 'Solde'} - ${formaterDate(acompte.dateEcheance)}`,
+                            });
+                            setReglements(chargerReglements());
+                          }}
                             title="Marquer cet acompte comme payé (virement, date d'aujourd'hui)"
                           >
                             <CheckCircle size={16} />
@@ -1170,8 +1168,6 @@ function ModalMarquerRegle({ facture, reglementsExistants, onSauvegarder, onFerm
   const regle = obtenirReglePaiement(facture.fournisseur);
   const acomptesPrevu = regle ? (() => {
     const dateFacture = new Date(facture.date);
-    const delaiBase = regle.delaiPaiement || 30;
-    
     if (facture.fournisseur === 'LEHMANN F' && regle.nombreAcomptes === 3) {
       const montantParTranche = facture.totalTTC / 3;
       return [

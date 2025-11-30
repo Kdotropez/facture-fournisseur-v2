@@ -614,7 +614,6 @@ export function apprendreCorrections(
       // Calculer les positions moyennes et les écarts types pour chaque champ
       Object.entries(positionsMoyennes).forEach(([champ, positions]) => {
         if (positions.length > 0) {
-          const moyenne = positions.reduce((a, b) => a + b, 0) / positions.length;
           const min = Math.min(...positions);
           const max = Math.max(...positions);
           
@@ -952,7 +951,6 @@ export function appliquerReglesApprises(
   
   if (!profil) {
     console.log(`[PARSING RULES] ❌ Aucun profil similaire trouvé pour ${fournisseur}`);
-    console.log(`[PARSING RULES] Signature recherchée: ${signature}`);
     console.log(`[PARSING RULES] Numéro de facture: ${facture.numero}`);
     if (regle.profils && regle.profils.length > 0) {
       console.log(`[PARSING RULES] Profils disponibles:`, regle.profils.map(p => ({

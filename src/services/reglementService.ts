@@ -7,9 +7,6 @@ import type {
   ReglePaiementFournisseur, 
   EtatReglementFacture,
   StatistiquesReglements,
-  TypeReglement,
-  StatutReglement,
-  ModePaiement
 } from '../types/reglement';
 import type { Facture, Fournisseur } from '../types/facture';
 
@@ -218,9 +215,7 @@ export function calculerEtatReglement(facture: Facture): EtatReglementFacture {
   const detectionDoublons = detecterDoublons(facture);
   
   // Montant réglé : utiliser le montant valide (limité au total TTC)
-  // Mais on garde aussi le montant brut pour afficher les incohérences
   const montantRegle = detectionDoublons.montantRegleValide;
-  const montantRegleBrut = detectionDoublons.montantRegleBrut;
   
   // Montant restant à régler (basé sur le montant valide)
   const montantRestant = Math.max(0, totalTTC - montantRegle);
@@ -538,10 +533,6 @@ export function calculerStatistiquesReglements(factures: Facture[]): Statistique
   const facturesReglees = etats.filter(e => e.statut === 'regle').length;
   const facturesPartielles = etats.filter(e => e.statut === 'partiel').length;
   const facturesNonReglees = etats.filter(e => e.statut === 'non_regle').length;
-  const facturesAvecDoublons = etats.filter(e => {
-    const detection = detecterDoublons(e.facture);
-    return detection.aDoublons;
-  }).length;
   
   // Calculer les totaux
   const totalARegler = factures.reduce((sum, f) => {
@@ -627,7 +618,6 @@ export function creerAcomptesPrevu(facture: Facture): Reglement[] {
   const reglements: Reglement[] = [];
   const dateFacture = new Date(facture.date);
   const delaiBase = reglePaiement.delaiPaiement || 30;
-  const delaiEntreAcomptes = reglePaiement.delaiEntreAcomptes || 30;
   const totalTTC = typeof facture.totalTTC === 'number' && !isNaN(facture.totalTTC) ? facture.totalTTC : 0;
   
   // Cas 1: RB DRINKS - Acompte en avance + solde (avec pourcentage par défaut)

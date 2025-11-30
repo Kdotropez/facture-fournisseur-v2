@@ -6,7 +6,6 @@ import { useRef, useState, useEffect } from 'react';
 import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard } from 'lucide-react';
 import { useFactures } from './hooks/useFactures';
 import { useImportPDF } from './hooks/useImportPDF';
-import { ListeFactures } from './components/ListeFactures';
 import { DetailsFacture } from './components/DetailsFacture';
 import { StatistiquesComponent } from './components/Statistiques';
 import { ImportPDF } from './components/ImportPDF';
@@ -19,7 +18,7 @@ import type { Fournisseur } from './types/facture';
 import { parserFacture } from '@parsers/index';
 import './App.css';
 import { lireFichierEnDataURL } from './utils/fileUtils';
-import { rechercherFacturesPerdues, afficherRapportDiagnostic, creerBackupFactures, nettoyerTousLesBackups } from './utils/diagnosticLocalStorage';
+import { rechercherFacturesPerdues, afficherRapportDiagnostic, creerBackupFactures } from './utils/diagnosticLocalStorage';
 import { chargerFactures } from './services/factureService';
 
 type Vue = 'factures' | 'statistiques' | 'import' | 'editeur' | 'reglements';
@@ -32,14 +31,11 @@ function App() {
   const inputRestaurationRef = useRef<HTMLInputElement>(null);
 
   const {
-    factures,
     toutesLesFactures,
-    termeRecherche,
     setTermeRecherche,
     fournisseurFiltre,
     setFournisseurFiltre,
     ajouterFacture,
-    supprimerFacture,
     mettreAJourFacture,
     remplacerFactures,
   } = useFactures();

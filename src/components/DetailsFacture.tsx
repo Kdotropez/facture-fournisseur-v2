@@ -4,7 +4,7 @@
 
 import { useState } from 'react';
 import { X, FileText, Calendar, Building2, Hash, AlertTriangle, CheckCircle, Edit, Plus, Trash2 } from 'lucide-react';
-import type { Facture, LigneProduit, Fournisseur } from '../types/facture';
+import type { Facture, LigneProduit } from '../types/facture';
 import { obtenirFournisseurs } from '@parsers/index';
 import './DetailsFacture.css';
 

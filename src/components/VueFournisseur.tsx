@@ -8,8 +8,7 @@ import { Building2, FileText, Euro, Calendar, TrendingUp, X, Filter, CheckSquare
 import type { Facture, Fournisseur } from '../types/facture';
 import { 
   calculerEtatReglement, 
-  ajouterReglement, 
-  chargerReglements,
+  ajouterReglement,
   creerAcomptesPrevu,
   creerAcomptesPrevuAvecPourcentage,
   obtenirReglePaiement,
@@ -48,7 +47,6 @@ interface VueFournisseurProps {
   fournisseursSelectionnes: Fournisseur[];
   toutesLesFactures: Facture[];
   onFournisseursChange: (fournisseurs: Fournisseur[]) => void;
-  onClose: () => void;
   onFactureSelect?: (facture: Facture) => void;
   onFactureUpdate?: () => void; // Callback pour forcer la mise à jour des factures
 }
@@ -57,7 +55,6 @@ export function VueFournisseur({
   fournisseursSelectionnes, 
   toutesLesFactures, 
   onFournisseursChange,
-  onClose, 
   onFactureSelect,
   onFactureUpdate
 }: VueFournisseurProps) {
@@ -213,8 +210,8 @@ export function VueFournisseur({
           case 'etat':
             const etatA = calculerEtatReglement(a);
             const etatB = calculerEtatReglement(b);
-            valeurA = etatA.etat;
-            valeurB = etatB.etat;
+            valeurA = etatA.statut;
+            valeurB = etatB.statut;
             break;
           case 'restantDu':
             const etatARestant = calculerEtatReglement(a);
@@ -297,7 +294,7 @@ export function VueFournisseur({
     // Calculer les montants dus
     const montantDu = factures.reduce((total, facture) => {
       const etat = calculerEtatReglement(facture);
-      if (etat.etat === 'non_regle' || etat.etat === 'partiel') {
+      if (etat.statut === 'non_regle' || etat.statut === 'partiel') {
         return total + etat.montantRestant;
       }
       return total;
@@ -510,7 +507,7 @@ export function VueFournisseur({
           </div>
         </div>
 
-        <div className="vue-fournisseur__stat-card vue-fournisseur__stat-card--warning">
+                <div className="vue-fournisseur__stat-card vue-fournisseur__stat-card--warning">
           <div className="vue-fournisseur__stat-icon">
             <TrendingUp size={20} />
           </div>
@@ -679,7 +676,7 @@ export function VueFournisseur({
               ) : (
                 factures.map((facture) => {
                   const etat = calculerEtatReglement(facture);
-                  const badge = getBadgeEtat(etat.etat);
+                  const badge = getBadgeEtat(etat.statut);
                   return (
                     <tr
                       key={facture.id}
@@ -1080,21 +1077,21 @@ function ModalReglementFacture({ facture, onSauvegarder, onFermer }: ModalReglem
                 <strong style={{ marginLeft: '0.5rem' }}>{reglementsEnAttente.length}</strong>
               </div>
             </div>
-            <div style={{ marginTop: '0.75rem', padding: '0.5rem', background: 'white', borderRadius: '4px' }}>
-              <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>Statut: </span>
-              <span
-                style={{
-                  padding: '0.25rem 0.5rem',
-                  borderRadius: '4px',
-                  fontSize: '0.75rem',
-                  fontWeight: 600,
-                  backgroundColor: etat.etat === 'regle' ? '#d1fae5' : etat.etat === 'partiel' ? '#fef3c7' : '#fee2e2',
-                  color: etat.etat === 'regle' ? '#059669' : etat.etat === 'partiel' ? '#d97706' : '#dc2626',
-                }}
-              >
-                {etat.etat === 'regle' ? 'Réglé' : etat.etat === 'partiel' ? 'Partiel' : 'Non réglé'}
-              </span>
-            </div>
+          <div style={{ marginTop: '0.75rem', padding: '0.5rem', background: 'white', borderRadius: '4px' }}>
+            <span style={{ fontSize: '0.75rem', color: '#6b7280' }}>Statut: </span>
+            <span
+              style={{
+                padding: '0.25rem 0.5rem',
+                borderRadius: '4px',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                backgroundColor: etat.statut === 'regle' ? '#d1fae5' : etat.statut === 'partiel' ? '#fef3c7' : '#fee2e2',
+                color: etat.statut === 'regle' ? '#059669' : etat.statut === 'partiel' ? '#d97706' : '#dc2626',
+              }}
+            >
+              {etat.statut === 'regle' ? 'Réglé' : etat.statut === 'partiel' ? 'Partiel' : 'Non réglé'}
+            </span>
+          </div>
           </div>
 
           {/* Liste des règlements existants */}
@@ -1139,7 +1136,7 @@ function ModalReglementFacture({ facture, onSauvegarder, onFermer }: ModalReglem
           )}
 
           {/* Formulaire de règlement */}
-          {etat.etat !== 'regle' && (
+          {etat.statut !== 'regle' && (
             <form onSubmit={handleSubmit}>
               <div style={{ marginBottom: '1rem' }}>
                 <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 600 }}>Mode de règlement *</label>
@@ -1288,7 +1285,7 @@ function ModalReglementFacture({ facture, onSauvegarder, onFermer }: ModalReglem
           )}
 
           {/* Si la facture est déjà réglée, afficher seulement les informations */}
-          {etat.etat === 'regle' && (
+          {etat.statut === 'regle' && (
             <div className="vue-fournisseur__modal-footer">
               <button
                 type="button"
