@@ -127,6 +127,7 @@ async function fichierExiste(chemin: string): Promise<boolean> {
 
 /**
  * Détecte le fournisseur depuis le nom du fichier ou le chemin
+ * Détecte aussi automatiquement les nouveaux fournisseurs depuis les noms de dossiers
  */
 function detecterFournisseurDepuisChemin(nom: string, chemin: string): Fournisseur | null {
   const nomUpper = nom.toUpperCase();
@@ -144,6 +145,36 @@ function detecterFournisseurDepuisChemin(nom: string, chemin: string): Fournisse
   
   if (cheminUpper.includes('LEHMANN') || (nomUpper.startsWith('F') && nomUpper.endsWith('.PDF'))) {
     return 'LEHMANN F';
+  }
+  
+  // Détection automatique des nouveaux fournisseurs depuis le nom du dossier
+  // Format attendu: "NOM FOURNISSEUR 2025" ou "NOM FOURNISSEUR"
+  const matchDossier = chemin.match(/^([^\/\\]+?)(?:\s+\d{4})?[\/\\]/i);
+  if (matchDossier) {
+    const nomDossier = matchDossier[1].trim();
+    // Si le nom du dossier ne correspond à aucun fournisseur connu, l'utiliser comme fournisseur
+    // Vérifier d'abord si ce n'est pas un dossier système
+    const dossiersSysteme = ['PUBLIC', 'DIST', 'SRC', 'NODE_MODULES'];
+    if (!dossiersSysteme.includes(nomDossier.toUpperCase())) {
+      // Charger les fournisseurs personnalisés depuis localStorage
+      try {
+        const fournisseursPerso = localStorage.getItem('fournisseurs-personnalises');
+        if (fournisseursPerso) {
+          const liste = JSON.parse(fournisseursPerso) as string[];
+          if (liste.includes(nomDossier)) {
+            return nomDossier as Fournisseur;
+          }
+        }
+      } catch (e) {
+        // Ignorer les erreurs de parsing
+      }
+      
+      // Si le dossier contient un nom qui ressemble à un fournisseur (plusieurs mots, majuscules)
+      // et qu'il n'est pas déjà dans les fournisseurs connus, le proposer
+      if (nomDossier.length > 2 && /[A-Z]/.test(nomDossier)) {
+        return nomDossier as Fournisseur;
+      }
+    }
   }
   
   return null;

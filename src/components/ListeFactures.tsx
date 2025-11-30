@@ -247,67 +247,114 @@ export function ListeFactures({
               ? 'Aucune facture ne correspond aux critères de recherche'
               : 'Aucune facture enregistrée'}
           </p>
-        </div>
-      ) : (
-        <div className="liste-factures__grid">
-          {factures.map(facture => (
-            <div
-              key={facture.id}
-              className={`liste-factures__card ${factureSelectionnee?.id === facture.id ? 'liste-factures__card--selected' : ''} ${facturesSelectionnees.has(facture.id) ? 'liste-factures__card--selectionnee' : ''}`}
+          {(termeRecherche || fournisseurFiltre) && (
+            <button
+              type="button"
               onClick={() => {
-                if (modeSelection) {
-                  toggleSelection(facture.id);
-                } else {
-                  onFactureSelect(facture);
-                }
+                onTermeRechercheChange('');
+                onFournisseurFiltreChange(null);
+              }}
+              style={{
+                marginTop: '1rem',
+                padding: '0.5rem 1rem',
+                border: '1px solid #3b82f6',
+                borderRadius: '6px',
+                background: 'white',
+                color: '#3b82f6',
+                cursor: 'pointer',
               }}
             >
-              {modeSelection && (
-                <div className="liste-factures__checkbox" onClick={(e) => e.stopPropagation()}>
-                  <input
-                    type="checkbox"
-                    checked={facturesSelectionnees.has(facture.id)}
-                    onChange={() => toggleSelection(facture.id)}
-                  />
-                </div>
-              )}
-              <div className="liste-factures__card-header">
-                <span className="liste-factures__badge liste-factures__badge--fournisseur">
-                  {facture.fournisseur}
-                </span>
-                <span className="liste-factures__numero">{facture.numero}</span>
-                {!modeSelection && (
-                  <button
-                    type="button"
-                    onClick={(e) => handleSupprimer(facture.id, e)}
-                    className="liste-factures__btn-supprimer"
-                    aria-label="Supprimer"
-                  >
-                    <Trash2 size={16} />
-                  </button>
+              Réinitialiser les filtres
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="liste-factures__table-container">
+          <table className="liste-factures__table">
+            <thead>
+              <tr>
+                {modeSelection && (
+                  <th className="liste-factures__th-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={facturesSelectionnees.size === factures.length && factures.length > 0}
+                      onChange={toggleSelectionToutes}
+                    />
+                  </th>
                 )}
-              </div>
-
-              <div className="liste-factures__card-body">
-                <div className="liste-factures__date">
-                  <Calendar size={16} />
-                  {formaterDate(facture.date)}
-                </div>
-                <div className="liste-factures__lignes">
-                  {facture.lignes.length} ligne{facture.lignes.length > 1 ? 's' : ''}
-                </div>
-              </div>
-
-              <div className="liste-factures__card-footer">
-                <div className="liste-factures__montant">
-                  <span className="liste-factures__montant-label">TTC</span>
-                  <span className="liste-factures__montant-value">
-                    {formaterMontant(facture.totalTTC)}
-                  </span>
-                </div>
-              </div>
-            </div>
-          ))}
+                <th>Numéro</th>
+                <th>Fournisseur</th>
+                <th>Date</th>
+                <th>Lignes</th>
+                <th className="liste-factures__th-montant">Total TTC</th>
+                {!modeSelection && <th className="liste-factures__th-actions">Actions</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {factures.map(facture => (
+                <tr
+                  key={facture.id}
+                  className={`liste-factures__row ${
+                    factureSelectionnee?.id === facture.id ? 'liste-factures__row--selected' : ''
+                  } ${
+                    facturesSelectionnees.has(facture.id) ? 'liste-factures__row--selectionnee' : ''
+                  }`}
+                  onClick={() => {
+                    if (modeSelection) {
+                      toggleSelection(facture.id);
+                    } else {
+                      onFactureSelect(facture);
+                    }
+                  }}
+                >
+                  {modeSelection && (
+                    <td className="liste-factures__td-checkbox" onClick={(e) => e.stopPropagation()}>
+                      <input
+                        type="checkbox"
+                        checked={facturesSelectionnees.has(facture.id)}
+                        onChange={() => toggleSelection(facture.id)}
+                        onClick={(e) => e.stopPropagation()}
+                      />
+                    </td>
+                  )}
+                  <td className="liste-factures__td-numero">
+                    <span className="liste-factures__numero">{facture.numero}</span>
+                  </td>
+                  <td className="liste-factures__td-fournisseur">
+                    <span className="liste-factures__badge liste-factures__badge--fournisseur">
+                      {facture.fournisseur}
+                    </span>
+                  </td>
+                  <td className="liste-factures__td-date">
+                    <div className="liste-factures__date">
+                      <Calendar size={14} />
+                      {formaterDate(facture.date)}
+                    </div>
+                  </td>
+                  <td className="liste-factures__td-lignes">
+                    {facture.lignes.length} ligne{facture.lignes.length > 1 ? 's' : ''}
+                  </td>
+                  <td className="liste-factures__td-montant">
+                    <span className="liste-factures__montant-value">
+                      {formaterMontant(facture.totalTTC)}
+                    </span>
+                  </td>
+                  {!modeSelection && (
+                    <td className="liste-factures__td-actions" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        type="button"
+                        onClick={(e) => handleSupprimer(facture.id, e)}
+                        className="liste-factures__btn-supprimer"
+                        aria-label="Supprimer"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </td>
+                  )}
+                </tr>
+              ))}
+            </tbody>
+          </table>
         </div>
       )}
 

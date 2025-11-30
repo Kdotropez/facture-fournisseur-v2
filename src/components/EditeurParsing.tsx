@@ -36,6 +36,11 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
   const [tousLesFournisseurs, setTousLesFournisseurs] = useState<Fournisseur[]>(obtenirTousLesFournisseurs());
   const [champEnFocus, setChampEnFocus] = useState<{ index: number; champ: string; valeur: string } | null>(null);
 
+  const dateFacture = factureEditee ? new Date(factureEditee.date) : null;
+  const dateFactureValide = dateFacture ? !Number.isNaN(dateFacture.getTime()) : false;
+  const valeurDateInput = dateFactureValide ? dateFacture!.toISOString().split('T')[0] : '';
+  const dateAffichee = dateFactureValide ? dateFacture!.toLocaleDateString('fr-FR') : 'Date invalide';
+
   // Debug: logger quand champEnFocus change
   useEffect(() => {
     if (champEnFocus) {
@@ -237,6 +242,84 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
       lignes: nouvellesLignes,
       totalHT,
       totalTTC: totalHT + factureEditee.totalTVA,
+    });
+  }, [factureEditee]);
+
+  const appliquerChampEnFocus = useCallback(() => {
+    if (!champEnFocus || !factureEditee) {
+      setChampEnFocus(null);
+      return;
+    }
+
+    const { champ, index, valeur } = champEnFocus;
+    const valeurNum = parseFloat(valeur);
+    const ligne = factureEditee.lignes[index];
+
+    switch (champ) {
+      case 'description':
+        handleEditerLigne(index, { description: valeur });
+        break;
+      case 'refFournisseur':
+        handleEditerLigne(index, { refFournisseur: valeur });
+        break;
+      case 'bat':
+        handleEditerLigne(index, { bat: valeur || undefined });
+        break;
+      case 'logo':
+        handleEditerLigne(index, { logo: valeur || undefined });
+        break;
+      case 'quantite': {
+        const quantite = Number.isNaN(valeurNum) ? 0 : valeurNum;
+        const montantHT = quantite * ligne.prixUnitaireHT - (ligne.remise || 0);
+        handleEditerLigne(index, { quantite, montantHT });
+        break;
+      }
+      case 'prixUnitaireHT': {
+        const prixUnitaire = Number.isNaN(valeurNum) ? 0 : valeurNum;
+        const montantHT = ligne.quantite * prixUnitaire - (ligne.remise || 0);
+        handleEditerLigne(index, { prixUnitaireHT: prixUnitaire, montantHT });
+        break;
+      }
+      case 'remise': {
+        const remise = Number.isNaN(valeurNum) ? 0 : valeurNum;
+        const montantHT = ligne.quantite * ligne.prixUnitaireHT - remise;
+        handleEditerLigne(index, { remise, montantHT });
+        break;
+      }
+      case 'montantHT': {
+        const montantHT = Number.isNaN(valeurNum) ? 0 : valeurNum;
+        // Recalculer le prix unitaire à partir du montant HT, quantité et remise
+        // montantHT = quantite * prixUnitaireHT - remise
+        // donc: prixUnitaireHT = (montantHT + remise) / quantite
+        const prixUnitaireHT = ligne.quantite > 0 
+          ? (montantHT + (ligne.remise || 0)) / ligne.quantite 
+          : ligne.prixUnitaireHT;
+        handleEditerLigne(index, { montantHT, prixUnitaireHT });
+        break;
+      }
+      default:
+        break;
+    }
+
+    setChampEnFocus(null);
+  }, [champEnFocus, factureEditee, handleEditerLigne]);
+
+  const handleAjouterLigne = useCallback(() => {
+    if (!factureEditee) return;
+    
+    const nouvelleLigne: LigneProduit = {
+      description: '',
+      quantite: 1,
+      prixUnitaireHT: 0,
+      remise: 0,
+      montantHT: 0,
+    };
+    
+    const nouvellesLignes = [...factureEditee.lignes, nouvelleLigne];
+    
+    setFactureEditee({
+      ...factureEditee,
+      lignes: nouvellesLignes,
     });
   }, [factureEditee]);
 
@@ -489,7 +572,7 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                 <input
                   type="text"
                   value={factureEditee.numero}
-                  onChange={(e) => setFactureEditee({ ...factureEditee, numero: e.target.value })}
+                  onChange={(e) => setFactureEditee(prev => prev ? { ...prev, numero: e.target.value } : prev)}
                   className="editeur-parsing__input-info"
                 />
               ) : (
@@ -497,18 +580,106 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
               )}
             </div>
             <div className="editeur-parsing__info-item">
-              <strong>Date :</strong> {factureEditee.date.toLocaleDateString('fr-FR')}
+              <strong>Date :</strong>
+              {modeEdition ? (
+                <input
+                  type="date"
+                  value={valeurDateInput}
+                  onChange={(e) => {
+                    const nouvelleValeur = e.target.value;
+                    setFactureEditee(prev => {
+                      if (!prev) return prev;
+                      return nouvelleValeur
+                        ? { ...prev, date: new Date(nouvelleValeur) }
+                        : prev;
+                    });
+                  }}
+                  className="editeur-parsing__input-info"
+                />
+              ) : (
+                <span>{dateAffichee}</span>
+              )}
             </div>
             <div className="editeur-parsing__info-item">
-              <strong>Total HT :</strong> {factureEditee.totalHT.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+              <strong>Total HT :</strong>
+              {modeEdition ? (
+                <input
+                  type="number"
+                  step="0.01"
+                  value={factureEditee.totalHT}
+                  onChange={(e) => {
+                    const valeur = parseFloat(e.target.value);
+                    setFactureEditee(prev => {
+                      if (!prev) return prev;
+                      const totalHT = Number.isNaN(valeur) ? 0 : valeur;
+                      return {
+                        ...prev,
+                        totalHT,
+                        totalTTC: totalHT + prev.totalTVA,
+                      };
+                    });
+                  }}
+                  className="editeur-parsing__input-info"
+                />
+              ) : (
+                <span>{factureEditee.totalHT.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</span>
+              )}
             </div>
             <div className="editeur-parsing__info-item">
-              <strong>Total TTC :</strong> {factureEditee.totalTTC.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+              <strong>Total TTC :</strong>
+              {modeEdition ? (
+                <input
+                  type="number"
+                  step="0.01"
+                  value={factureEditee.totalTTC}
+                  onChange={(e) => {
+                    const valeur = parseFloat(e.target.value);
+                    setFactureEditee(prev => {
+                      if (!prev) return prev;
+                      const totalTTC = Number.isNaN(valeur) ? 0 : valeur;
+                      const totalTVA = Math.max(0, totalTTC - prev.totalHT);
+                      return {
+                        ...prev,
+                        totalTVA,
+                        totalTTC,
+                      };
+                    });
+                  }}
+                  className="editeur-parsing__input-info"
+                />
+              ) : (
+                <span>{factureEditee.totalTTC.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</span>
+              )}
             </div>
           </div>
 
           <div className="editeur-parsing__lignes">
-            <h4>Lignes de produits ({factureEditee.lignes.length})</h4>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h4>Lignes de produits ({factureEditee.lignes.length})</h4>
+              {modeEdition && (
+                <button
+                  type="button"
+                  onClick={handleAjouterLigne}
+                  className="editeur-parsing__btn-add"
+                  title="Ajouter une ligne"
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '0.5rem',
+                    padding: '0.5rem 1rem',
+                    backgroundColor: '#10b981',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '0.875rem',
+                  }}
+                >
+                  <Plus size={16} />
+                  Ajouter une ligne
+                </button>
+              )}
+            </div>
             <table className="editeur-parsing__table">
               <thead>
                 <tr>
@@ -658,7 +829,23 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                           />
                         </td>
                         <td>
-                          {ligne.montantHT.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={ligne.montantHT}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setChampEnFocus({ index, champ: 'montantHT', valeur: ligne.montantHT.toString() });
+                            }}
+                            readOnly
+                            className="editeur-parsing__input-cell"
+                            style={{
+                              width: '100%',
+                              cursor: 'pointer',
+                              backgroundColor: '#f8f9fa',
+                            }}
+                            title="Cliquez pour éditer"
+                          />
                         </td>
                         <td>
                           <button
@@ -705,32 +892,7 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
       {champEnFocus && factureEditee && (
         <div 
           className="editeur-parsing__modal-overlay"
-          onClick={() => {
-            // Sauvegarder avant de fermer
-            const valeurNum = parseFloat(champEnFocus.valeur);
-            if (champEnFocus.champ === 'description') {
-              handleEditerLigne(champEnFocus.index, { description: champEnFocus.valeur });
-            } else if (champEnFocus.champ === 'refFournisseur') {
-              handleEditerLigne(champEnFocus.index, { refFournisseur: champEnFocus.valeur });
-            } else if (champEnFocus.champ === 'bat') {
-              handleEditerLigne(champEnFocus.index, { bat: champEnFocus.valeur || undefined });
-            } else if (champEnFocus.champ === 'logo') {
-              handleEditerLigne(champEnFocus.index, { logo: champEnFocus.valeur || undefined });
-            } else if (champEnFocus.champ === 'quantite') {
-              const ligne = factureEditee!.lignes[champEnFocus.index];
-              const montantHT = (isNaN(valeurNum) ? 0 : valeurNum) * ligne.prixUnitaireHT - (ligne.remise || 0);
-              handleEditerLigne(champEnFocus.index, { quantite: isNaN(valeurNum) ? 0 : valeurNum, montantHT });
-            } else if (champEnFocus.champ === 'prixUnitaireHT') {
-              const ligne = factureEditee!.lignes[champEnFocus.index];
-              const montantHT = ligne.quantite * (isNaN(valeurNum) ? 0 : valeurNum) - (ligne.remise || 0);
-              handleEditerLigne(champEnFocus.index, { prixUnitaireHT: isNaN(valeurNum) ? 0 : valeurNum, montantHT });
-            } else if (champEnFocus.champ === 'remise') {
-              const ligne = factureEditee!.lignes[champEnFocus.index];
-              const montantHT = ligne.quantite * ligne.prixUnitaireHT - (isNaN(valeurNum) ? 0 : valeurNum);
-              handleEditerLigne(champEnFocus.index, { remise: isNaN(valeurNum) ? 0 : valeurNum, montantHT });
-            }
-            setChampEnFocus(null);
-          }}
+          onClick={appliquerChampEnFocus}
           style={{
             position: 'fixed',
             top: 0,
@@ -765,7 +927,8 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                       champEnFocus.champ === 'logo' ? 'Logo' :
                       champEnFocus.champ === 'quantite' ? 'Quantité' :
                       champEnFocus.champ === 'prixUnitaireHT' ? 'Prix unitaire HT' :
-                      champEnFocus.champ === 'remise' ? 'Remise' : champEnFocus.champ}
+                      champEnFocus.champ === 'remise' ? 'Remise' :
+                      champEnFocus.champ === 'montantHT' ? 'Montant HT' : champEnFocus.champ}
             </h3>
             {champEnFocus.champ === 'description' ? (
               <textarea
@@ -784,7 +947,7 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                   flex: 1,
                 }}
               />
-            ) : (champEnFocus.champ === 'quantite' || champEnFocus.champ === 'prixUnitaireHT' || champEnFocus.champ === 'remise') ? (
+            ) : (champEnFocus.champ === 'quantite' || champEnFocus.champ === 'prixUnitaireHT' || champEnFocus.champ === 'remise' || champEnFocus.champ === 'montantHT') ? (
               <input
                 type="number"
                 step={champEnFocus.champ === 'quantite' ? '1' : '0.01'}
@@ -801,21 +964,7 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    const valeurNum = parseFloat(champEnFocus.valeur) || 0;
-                    if (champEnFocus.champ === 'quantite') {
-                      const ligne = factureEditee!.lignes[champEnFocus.index];
-                      const montantHT = valeurNum * ligne.prixUnitaireHT - (ligne.remise || 0);
-                      handleEditerLigne(champEnFocus.index, { quantite: valeurNum, montantHT });
-                    } else if (champEnFocus.champ === 'prixUnitaireHT') {
-                      const ligne = factureEditee!.lignes[champEnFocus.index];
-                      const montantHT = ligne.quantite * valeurNum - (ligne.remise || 0);
-                      handleEditerLigne(champEnFocus.index, { prixUnitaireHT: valeurNum, montantHT });
-                    } else if (champEnFocus.champ === 'remise') {
-                      const ligne = factureEditee!.lignes[champEnFocus.index];
-                      const montantHT = ligne.quantite * ligne.prixUnitaireHT - valeurNum;
-                      handleEditerLigne(champEnFocus.index, { remise: valeurNum, montantHT });
-                    }
-                    setChampEnFocus(null);
+                    appliquerChampEnFocus();
                   }
                   if (e.key === 'Escape') {
                     setChampEnFocus(null);
@@ -838,14 +987,7 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) {
                     e.preventDefault();
-                    if (champEnFocus.champ === 'refFournisseur') {
-                      handleEditerLigne(champEnFocus.index, { refFournisseur: champEnFocus.valeur });
-                    } else if (champEnFocus.champ === 'bat') {
-                      handleEditerLigne(champEnFocus.index, { bat: champEnFocus.valeur || undefined });
-                    } else if (champEnFocus.champ === 'logo') {
-                      handleEditerLigne(champEnFocus.index, { logo: champEnFocus.valeur || undefined });
-                    }
-                    setChampEnFocus(null);
+                    appliquerChampEnFocus();
                   }
                   if (e.key === 'Escape') {
                     setChampEnFocus(null);
@@ -856,18 +998,7 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
             <div style={{ display: 'flex', gap: '1rem', marginTop: '1.5rem', justifyContent: 'flex-end' }}>
               <button
                 type="button"
-                onClick={() => {
-                  if (champEnFocus.champ === 'description') {
-                    handleEditerLigne(champEnFocus.index, { description: champEnFocus.valeur });
-                  } else if (champEnFocus.champ === 'refFournisseur') {
-                    handleEditerLigne(champEnFocus.index, { refFournisseur: champEnFocus.valeur });
-                  } else if (champEnFocus.champ === 'bat') {
-                    handleEditerLigne(champEnFocus.index, { bat: champEnFocus.valeur || undefined });
-                  } else if (champEnFocus.champ === 'logo') {
-                    handleEditerLigne(champEnFocus.index, { logo: champEnFocus.valeur || undefined });
-                  }
-                  setChampEnFocus(null);
-                }}
+                onClick={appliquerChampEnFocus}
                 style={{
                   padding: '0.75rem 1.5rem',
                   background: '#3b82f6',

@@ -30,14 +30,118 @@ export function chargerFactures(): Facture[] {
 }
 
 /**
+ * Nettoie les anciens backups pour libérer de l'espace
+ */
+function nettoyerBackups(): void {
+  try {
+    const backups: Array<{ cle: string; timestamp: number }> = [];
+    
+    // Collecter tous les backups avec leur timestamp
+    for (let i = 0; i < localStorage.length; i++) {
+      const cle = localStorage.key(i);
+      if (cle && cle.startsWith(`${STORAGE_KEY}-backup-`)) {
+        // Extraire le timestamp du nom de la clé
+        const match = cle.match(/backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)/);
+        if (match) {
+          try {
+            const timestamp = new Date(match[1].replace(/-/g, ':').replace('T', 'T').replace(/(\d{2})-(\d{2})-(\d{2})/, '$1:$2:$3')).getTime();
+            backups.push({ cle, timestamp });
+          } catch {
+            // Si le parsing échoue, garder le backup mais le considérer comme ancien
+            backups.push({ cle, timestamp: 0 });
+          }
+        }
+      }
+    }
+    
+    // Trier par timestamp (plus récent en premier)
+    backups.sort((a, b) => b.timestamp - a.timestamp);
+    
+    // Garder seulement les 3 derniers backups et supprimer les autres
+    if (backups.length > 3) {
+      for (let i = 3; i < backups.length; i++) {
+        localStorage.removeItem(backups[i].cle);
+        console.log(`🗑️ Backup supprimé: ${backups[i].cle}`);
+      }
+    }
+  } catch (error) {
+    console.warn('Erreur lors du nettoyage des backups:', error);
+  }
+}
+
+/**
+ * Vérifie l'espace disponible dans le localStorage
+ */
+function verifierEspaceDisponible(tailleEstimee: number): boolean {
+  try {
+    // Tester si on peut stocker les données
+    const testKey = '__test_storage__';
+    const testData = 'x'.repeat(Math.min(tailleEstimee, 100000)); // Max 100KB pour le test
+    localStorage.setItem(testKey, testData);
+    localStorage.removeItem(testKey);
+    return true;
+  } catch (error) {
+    return false;
+  }
+}
+
+/**
  * Sauvegarde toutes les factures dans le stockage local
+ * Crée automatiquement un backup avant de sauvegarder (si espace disponible)
  */
 export function sauvegarderFactures(factures: Facture[]): void {
   try {
+    // Nettoyer les anciens backups d'abord
+    nettoyerBackups();
+    
+    // Créer un backup seulement si on a de l'espace
+    const donneesActuelles = localStorage.getItem(STORAGE_KEY);
+    if (donneesActuelles) {
+      const tailleEstimee = donneesActuelles.length;
+      
+      // Vérifier si on a assez d'espace pour un backup
+      if (verifierEspaceDisponible(tailleEstimee * 2)) {
+        try {
+          const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+          const cleBackup = `${STORAGE_KEY}-backup-${timestamp}`;
+          localStorage.setItem(cleBackup, donneesActuelles);
+          console.log(`✅ Backup créé: ${cleBackup}`);
+        } catch (backupError) {
+          // Si le backup échoue, nettoyer et réessayer
+          console.warn('⚠️ Impossible de créer un backup, nettoyage...');
+          nettoyerBackups();
+          // Ne pas bloquer la sauvegarde principale si le backup échoue
+        }
+      } else {
+        console.warn('⚠️ Espace localStorage insuffisant pour créer un backup');
+        // Nettoyer encore plus agressivement
+        nettoyerBackups();
+      }
+    }
+    
+    // Sauvegarder les nouvelles données
     localStorage.setItem(STORAGE_KEY, JSON.stringify(factures));
   } catch (error) {
-    console.error('Erreur lors de la sauvegarde des factures:', error);
-    throw error;
+    // Si l'erreur est liée au quota, nettoyer et réessayer
+    if (error instanceof Error && error.name === 'QuotaExceededError') {
+      console.warn('⚠️ Quota localStorage dépassé, nettoyage agressif...');
+      
+      // Nettoyer tous les backups sauf le plus récent
+      nettoyerBackups();
+      
+      // Supprimer aussi les autres données temporaires si nécessaire
+      try {
+        // Réessayer la sauvegarde
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(factures));
+        console.log('✅ Sauvegarde réussie après nettoyage');
+      } catch (retryError) {
+        console.error('❌ Impossible de sauvegarder même après nettoyage:', retryError);
+        throw new Error('Espace de stockage insuffisant. Veuillez exporter vos données et nettoyer le navigateur.');
+      }
+    } else {
+      console.error('Erreur lors de la sauvegarde des factures:', error);
+      throw error;
+    }
   }
 }
 

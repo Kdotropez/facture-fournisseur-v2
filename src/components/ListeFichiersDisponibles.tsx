@@ -123,11 +123,22 @@ export function ListeFichiersDisponibles({
   };
 
   const handleChargerTous = async () => {
-    for (const fichier of fichiersAffiches) {
-      if (!estCharge(fichier.chemin) && !estEnChargement(fichier.chemin)) {
+    const fichiersACharger = fichiersAffiches.filter(f => !estCharge(f.chemin) && !estEnChargement(f.chemin));
+    
+    // Charger tous les fichiers en parallèle (ou séquentiellement si nécessaire)
+    for (const fichier of fichiersACharger) {
+      try {
         await onChargerFichier(fichier.chemin, fichier.fournisseur);
+        // Petit délai entre chaque chargement pour éviter de surcharger
+        await new Promise(resolve => setTimeout(resolve, 200));
+      } catch (error) {
+        console.error(`Erreur lors du chargement de ${fichier.nom}:`, error);
+        // Continuer avec les autres fichiers même en cas d'erreur
       }
     }
+    
+    // Attendre un peu plus après le dernier chargement pour que toutes les sauvegardes soient terminées
+    await new Promise(resolve => setTimeout(resolve, 300));
   };
 
   const handleAjouterFichierManuel = () => {

@@ -165,6 +165,7 @@ async function parserGenerique(
 
 /**
  * Détecte automatiquement le fournisseur à partir du chemin du fichier
+ * Détecte aussi automatiquement les nouveaux fournisseurs depuis les noms de dossiers
  */
 export function detecterFournisseur(chemin: string): Fournisseur | null {
   const cheminNormalise = chemin.toUpperCase();
@@ -179,8 +180,39 @@ export function detecterFournisseur(chemin: string): Fournisseur | null {
   if (cheminNormalise.includes('RB DRINKS')) {
     return 'RB DRINKS';
   }
-  if (cheminNormalise.includes('LEHMANN')) {
+  if (
+    cheminNormalise.includes('LEHMANN F') ||
+    cheminNormalise.includes('LEHMANN FRERES') ||
+    cheminNormalise.includes('LEHMANN FRÈRES') ||
+    (cheminNormalise.includes('LEHMANN') && cheminNormalise.includes('F'))
+  ) {
     return 'LEHMANN F';
+  }
+
+  // Détection automatique des nouveaux fournisseurs depuis le nom du dossier
+  // Format attendu: "NOM FOURNISSEUR 2025" ou "NOM FOURNISSEUR"
+  const matchDossier = chemin.match(/^([^\/\\]+?)(?:\s+\d{4})?[\/\\]/i);
+  if (matchDossier) {
+    const nomDossier = matchDossier[1].trim();
+    // Vérifier si c'est un fournisseur personnalisé enregistré
+    try {
+      const fournisseursPerso = localStorage.getItem('fournisseurs-personnalises');
+      if (fournisseursPerso) {
+        const liste = JSON.parse(fournisseursPerso) as string[];
+        if (liste.includes(nomDossier)) {
+          return nomDossier as Fournisseur;
+        }
+      }
+    } catch (e) {
+      // Ignorer les erreurs de parsing
+    }
+    
+    // Si le nom du dossier ressemble à un fournisseur (plusieurs mots, majuscules)
+    const dossiersSysteme = ['PUBLIC', 'DIST', 'SRC', 'NODE_MODULES'];
+    if (!dossiersSysteme.includes(nomDossier.toUpperCase()) && 
+        nomDossier.length > 2 && /[A-Z]/.test(nomDossier)) {
+      return nomDossier as Fournisseur;
+    }
   }
 
   return null;

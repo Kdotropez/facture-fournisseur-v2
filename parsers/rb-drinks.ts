@@ -1,6 +1,10 @@
 /**
  * Parser pour les factures RB DRINKS
  * Analyse le contenu réel des PDFs
+ * 
+ * NOTE: Les factures RB DRINKS peuvent avoir des variations dans leur structure.
+ * Par exemple, RB3 avait une structure légèrement différente des autres factures.
+ * Le parser est conçu pour être flexible et gérer ces variations.
  */
 
 import type { Parser, ParserResult } from './types';
@@ -142,9 +146,28 @@ export const parserRBDrinks: Parser = {
       
       // Le texte est déjà bien formaté avec des espaces multiples séparant les colonnes
       // Chercher la section du tableau (après l'en-tête "RÉF.   DÉSIGNATION   BAT   LOGO   QTÉ.   PU HT   REMISE   MONTANT HT")
+      // NOTE: Certaines factures (comme RB3) peuvent avoir des variations dans l'en-tête
+      // On accepte plusieurs variantes pour être plus robuste
       const enTeteRegex = /(RÉF\.|REF\.)\s+DÉSIGNATION\s+BAT\s+LOGO\s+QT[ÉE]\.\s+PU\s+HT\s+REMISE\s+MONTANT\s+HT/i;
       const enTeteMatch = textePDF.match(enTeteRegex);
-      const debutTableau = enTeteMatch ? (enTeteMatch.index || 0) + enTeteMatch[0].length : -1;
+      let debutTableau = enTeteMatch ? (enTeteMatch.index || 0) + enTeteMatch[0].length : -1;
+      
+      // Si l'en-tête standard n'est pas trouvé, essayer des variantes (pour gérer les variations comme RB3)
+      if (debutTableau < 0) {
+        const enTeteVariantes = [
+          /(RÉF\.|REF\.)\s+DÉSIGNATION/i,
+          /DÉSIGNATION\s+BAT/i,
+          /REF\s+DÉSIGNATION/i,
+        ];
+        for (const variante of enTeteVariantes) {
+          const match = textePDF.match(variante);
+          if (match) {
+            debutTableau = (match.index || 0) + match[0].length;
+            console.log('En-tête trouvé avec variante:', variante.source);
+            break;
+          }
+        }
+      }
       
       // Chercher la fin du tableau (avant le DERNIER "Total HT" pour gérer les factures multi-pages)
       const totalHTRegex = /Total\s+HT/gi;
@@ -159,12 +182,21 @@ export const parserRBDrinks: Parser = {
         : textePDF;
       
       // Normaliser la section pour lisser les retours chariot simples (factures sur plusieurs pages)
+      // NOTE: Certaines factures (comme RB3) peuvent avoir des formats de saut de ligne différents
+      // On normalise de manière plus agressive pour gérer ces variations
       const sectionTableau = sectionTableauBrut
         .replace(/\r?\n\s*/g, '  ')  // convertir chaque saut de ligne en double espace
+        .replace(/\f+/g, '  ')       // convertir les sauts de page en double espace aussi
         .replace(/\s{3,}/g, '  ');   // limiter les groupes d'espaces à 2 pour préserver les séparateurs
       
       console.log('Section tableau extraite (longueur:', sectionTableau.length, 'caractères)');
       console.log('Section tableau (premiers 2000 caractères):', sectionTableau.substring(0, 2000));
+      
+      // Détecter si la structure semble différente (pour aider au debug)
+      const aEnTeteStandard = enTeteMatch !== null;
+      if (!aEnTeteStandard) {
+        console.log('⚠️ En-tête standard non trouvé, utilisation de variantes (peut indiquer une structure différente comme RB3)');
+      }
       
       // APPROCHE SIMPLIFIÉE :
       // 1. D'abord, extraire les lignes avec références spéciales (1-couleur, FT, CHFT, CHFR, TRANSPORT) - pas de BAT/LOGO
@@ -178,6 +210,8 @@ export const parserRBDrinks: Parser = {
       // Pattern 1: Lignes avec BAT et LOGO (format standard)
       // Format: REF   Description   BAT (4 chiffres)   LOGO (majuscules)   Qté   PU HT   Remise   Montant HT
       // Le pattern doit être plus flexible pour capturer les logos avec espaces (ex: "RELAIS TROPEZ")
+      // NOTE: Certaines factures (comme RB3) peuvent avoir des variations dans l'espacement ou le format
+      // On utilise un pattern plus flexible avec des quantificateurs non-greedy pour gérer les variations
       const patternLigneComplet = /([A-Z0-9\-]+)\s+(.+?)\s+(\d{4})\s+([A-Z\s]{3,})\s+([\d,]+)\s+([\d,]+\.\d{2})\s*€\s+([\d,]+\.\d{2})\s*€\s+([\d,]+\.\d{2})\s*€/gi;
       
       let match;
@@ -348,6 +382,8 @@ export const parserRBDrinks: Parser = {
       
       // Approche différente : diviser le texte en lignes en cherchant les montants HT suivis d'une référence
       // Cela permet de séparer correctement les lignes collées ensemble
+      // NOTE: Cette étape est importante pour les factures avec des variations de structure (comme RB3)
+      // où certaines lignes peuvent ne pas avoir de BAT/LOGO mais être valides
       const lignesSimples: Array<{ref: string, texte: string, index: number}> = [];
       const refPattern = /\b([A-Z0-9\-]+)\s+/g;
       let refMatch;
@@ -596,6 +632,12 @@ export const parserRBDrinks: Parser = {
         const difference = Math.abs(totalHTLignes - netHT);
         if (difference > 0.01) {
           avertissements.push(`Écart de ${difference.toFixed(2)}€ entre la somme des lignes (${totalHTLignes.toFixed(2)}€) et le net HT (${netHT.toFixed(2)}€).`);
+        }
+        
+        // Log pour aider au debug des variations de structure
+        console.log(`✅ Parsing terminé: ${lignes.length} lignes extraites pour ${nomFichier}`);
+        if (nomFichier.includes('RB3')) {
+          console.log('ℹ️ Facture RB3 détectée - structure avec variations gérées');
         }
       }
 

@@ -1,0 +1,21 @@
+VERIFICATION DU DEPOT GIT
+==========================
+
+Date: $(Get-Date)
+
+VERIFICATION EFFECTUEE:
+- Depot Git local: $(if (Test-Path .git) { "OK" } else { "MANQUANT" })
+- Remote configure: $(git config --get remote.origin.url)
+- Branche actuelle: $(git rev-parse --abbrev-ref HEAD)
+- Dernier commit: $(git log --oneline -1)
+
+ETAT DE SYNCHRONISATION:
+$(git status -sb)
+
+CONCLUSION:
+Pour verifier si le push a fonctionne, allez sur:
+https://github.com/Kdotropez/Factures-et-Fournisseurs
+
+Si vous voyez vos fichiers = PUSH REUSSI
+Si le depot est vide = PUSH NON FAIT
+

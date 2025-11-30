@@ -3,18 +3,19 @@
  */
 
 import { useState } from 'react';
-import { X, FileText, Calendar, Building2, Hash, Code, ChevronDown, ChevronUp, AlertTriangle, CheckCircle } from 'lucide-react';
-import type { Facture } from '../types/facture';
+import { X, FileText, Calendar, Building2, Hash, AlertTriangle, CheckCircle, Edit, Plus, Trash2 } from 'lucide-react';
+import type { Facture, LigneProduit, Fournisseur } from '../types/facture';
+import { obtenirFournisseurs } from '@parsers/index';
 import './DetailsFacture.css';
 
 interface DetailsFactureProps {
   facture: Facture | null;
   onClose: () => void;
+  onUpdate?: (facture: Facture) => void;
 }
 
-export function DetailsFacture({ facture, onClose }: DetailsFactureProps) {
-  const [debugOuvert, setDebugOuvert] = useState(false);
-
+export function DetailsFacture({ facture, onClose, onUpdate }: DetailsFactureProps) {
+  const [editionMode, setEditionMode] = useState(false);
   if (!facture) {
     return (
       <div className="details-facture details-facture--empty">
@@ -49,13 +50,6 @@ export function DetailsFacture({ facture, onClose }: DetailsFactureProps) {
   const ecartTTCSignificatif = Math.abs(ecartTTC) > tolerance;
 
   const verificationOK = !ecartHTSignificatif && !ecartTTCSignificatif;
-  const texteBrut = facture.donneesBrutes
-    ? typeof facture.donneesBrutes.texteComplet === 'string'
-      ? facture.donneesBrutes.texteComplet
-      : typeof facture.donneesBrutes.texteExtrait === 'string'
-        ? facture.donneesBrutes.texteExtrait
-        : 'Aucun texte extrait'
-    : 'Aucun texte extrait';
 
   return (
     <div className="details-facture">
@@ -67,14 +61,25 @@ export function DetailsFacture({ facture, onClose }: DetailsFactureProps) {
             <span className="details-facture__numero">{facture.numero}</span>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="details-facture__close-btn"
-          aria-label="Fermer"
-        >
-          <X size={24} />
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={() => setEditionMode(true)}
+            className="details-facture__edit-btn"
+            aria-label="Éditer"
+            title="Éditer la facture"
+          >
+            <Edit size={20} />
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="details-facture__close-btn"
+            aria-label="Fermer"
+          >
+            <X size={24} />
+          </button>
+        </div>
       </div>
 
       <div className="details-facture__content">
@@ -233,55 +238,335 @@ export function DetailsFacture({ facture, onClose }: DetailsFactureProps) {
             </div>
           </div>
         </div>
+      </div>
 
-        {/* Section Debug - Données brutes extraites */}
-        {facture.donneesBrutes && (
-          <div className="details-facture__section">
+      {/* Modal d'édition */}
+      {editionMode && facture && (
+        <ModalEditionFacture
+          facture={facture}
+          onSauvegarder={(factureModifiee) => {
+            onUpdate?.(factureModifiee);
+            setEditionMode(false);
+          }}
+          onFermer={() => setEditionMode(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+// Composant Modal pour éditer une facture
+interface ModalEditionFactureProps {
+  facture: Facture;
+  onSauvegarder: (facture: Facture) => void;
+  onFermer: () => void;
+}
+
+function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionFactureProps) {
+  const [factureModifiee, setFactureModifiee] = useState<Facture>({ ...facture });
+  const tousLesFournisseurs = obtenirFournisseurs();
+
+  const handleChange = (field: keyof Facture, value: unknown) => {
+    setFactureModifiee(prev => ({ ...prev, [field]: value }));
+  };
+
+  const handleChangeLigne = (index: number, field: keyof LigneProduit, value: unknown) => {
+    setFactureModifiee(prev => {
+      const nouvellesLignes = [...prev.lignes];
+      nouvellesLignes[index] = { ...nouvellesLignes[index], [field]: value };
+      
+      // Recalculer le montant HT de la ligne
+      if (field === 'quantite' || field === 'prixUnitaireHT' || field === 'remise') {
+        const ligne = nouvellesLignes[index];
+        const montantHT = (ligne.quantite * ligne.prixUnitaireHT) - ligne.remise;
+        nouvellesLignes[index] = { ...ligne, montantHT: Math.max(0, montantHT) };
+      }
+      
+      return { ...prev, lignes: nouvellesLignes };
+    });
+  };
+
+  const handleAjouterLigne = () => {
+    setFactureModifiee(prev => ({
+      ...prev,
+      lignes: [
+        ...prev.lignes,
+        {
+          description: '',
+          quantite: 1,
+          prixUnitaireHT: 0,
+          remise: 0,
+          montantHT: 0,
+        },
+      ],
+    }));
+  };
+
+  const handleSupprimerLigne = (index: number) => {
+    setFactureModifiee(prev => ({
+      ...prev,
+      lignes: prev.lignes.filter((_, i) => i !== index),
+    }));
+  };
+
+  const handleSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    
+    // Recalculer les totaux à partir des lignes
+    const totalHT = factureModifiee.lignes.reduce((sum, ligne) => sum + ligne.montantHT, 0);
+    const totalTVA = factureModifiee.totalTTC - totalHT;
+    
+    const factureFinale: Facture = {
+      ...factureModifiee,
+      totalHT,
+      totalTVA,
+      // Si totalTTC n'a pas été modifié manuellement, le recalculer
+      totalTTC: factureModifiee.totalTTC || (totalHT + totalTVA),
+    };
+    
+    onSauvegarder(factureFinale);
+  };
+
+  const formaterDate = (date: Date) => {
+    if (!(date instanceof Date) || isNaN(date.getTime())) {
+      return '';
+    }
+    return date.toISOString().split('T')[0];
+  };
+
+  return (
+    <div className="details-facture__modal-overlay" onClick={onFermer}>
+      <div className="details-facture__modal" onClick={(e) => e.stopPropagation()}>
+        <div className="details-facture__modal-header">
+          <h2>Éditer la facture {facture.numero}</h2>
+          <button
+            type="button"
+            onClick={onFermer}
+            className="details-facture__modal-close"
+            aria-label="Fermer"
+          >
+            <X size={24} />
+          </button>
+        </div>
+
+        <form onSubmit={handleSubmit} className="details-facture__modal-form">
+          {/* Informations générales */}
+          <div className="details-facture__modal-section">
+            <h3>Informations générales</h3>
+            <div className="details-facture__modal-grid">
+              <div className="details-facture__modal-field">
+                <label>Fournisseur *</label>
+                <select
+                  value={factureModifiee.fournisseur}
+                  onChange={(e) => handleChange('fournisseur', e.target.value)}
+                  required
+                >
+                  {tousLesFournisseurs.map(f => (
+                    <option key={f} value={f}>{f}</option>
+                  ))}
+                </select>
+              </div>
+              <div className="details-facture__modal-field">
+                <label>Numéro *</label>
+                <input
+                  type="text"
+                  value={factureModifiee.numero}
+                  onChange={(e) => handleChange('numero', e.target.value)}
+                  required
+                />
+              </div>
+              <div className="details-facture__modal-field">
+                <label>Date facture *</label>
+                <input
+                  type="date"
+                  value={formaterDate(factureModifiee.date)}
+                  onChange={(e) => handleChange('date', new Date(e.target.value))}
+                  required
+                />
+              </div>
+              <div className="details-facture__modal-field">
+                <label>Date livraison</label>
+                <input
+                  type="date"
+                  value={factureModifiee.dateLivraison ? formaterDate(factureModifiee.dateLivraison) : ''}
+                  onChange={(e) => handleChange('dateLivraison', e.target.value ? new Date(e.target.value) : undefined)}
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Lignes de produits */}
+          <div className="details-facture__modal-section">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
+              <h3>Lignes de produits</h3>
+              <button
+                type="button"
+                onClick={handleAjouterLigne}
+                className="details-facture__btn-add"
+              >
+                <Plus size={16} />
+                Ajouter une ligne
+              </button>
+            </div>
+            <div className="details-facture__modal-lignes">
+              {factureModifiee.lignes.map((ligne, index) => (
+                <div key={index} className="details-facture__modal-ligne">
+                  <div className="details-facture__modal-ligne-header">
+                    <strong>Ligne {index + 1}</strong>
+                    <button
+                      type="button"
+                      onClick={() => handleSupprimerLigne(index)}
+                      className="details-facture__btn-delete"
+                    >
+                      <Trash2 size={16} />
+                    </button>
+                  </div>
+                  <div className="details-facture__modal-ligne-grid">
+                    <div className="details-facture__modal-field">
+                      <label>Référence fournisseur</label>
+                      <input
+                        type="text"
+                        value={ligne.refFournisseur || ''}
+                        onChange={(e) => handleChangeLigne(index, 'refFournisseur', e.target.value || undefined)}
+                      />
+                    </div>
+                    <div className="details-facture__modal-field details-facture__modal-field--large">
+                      <label>Description *</label>
+                      <input
+                        type="text"
+                        value={ligne.description}
+                        onChange={(e) => handleChangeLigne(index, 'description', e.target.value)}
+                        required
+                      />
+                    </div>
+                    <div className="details-facture__modal-field">
+                      <label>BAT</label>
+                      <input
+                        type="text"
+                        value={ligne.bat || ''}
+                        onChange={(e) => handleChangeLigne(index, 'bat', e.target.value || undefined)}
+                      />
+                    </div>
+                    <div className="details-facture__modal-field">
+                      <label>Logo</label>
+                      <input
+                        type="text"
+                        value={ligne.logo || ''}
+                        onChange={(e) => handleChangeLigne(index, 'logo', e.target.value || undefined)}
+                      />
+                    </div>
+                    <div className="details-facture__modal-field">
+                      <label>Couleur</label>
+                      <input
+                        type="text"
+                        value={ligne.couleur || ''}
+                        onChange={(e) => handleChangeLigne(index, 'couleur', e.target.value || undefined)}
+                      />
+                    </div>
+                    <div className="details-facture__modal-field">
+                      <label>Quantité *</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={ligne.quantite}
+                        onChange={(e) => handleChangeLigne(index, 'quantite', parseFloat(e.target.value) || 0)}
+                        required
+                      />
+                    </div>
+                    <div className="details-facture__modal-field">
+                      <label>Prix unitaire HT *</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={ligne.prixUnitaireHT}
+                        onChange={(e) => handleChangeLigne(index, 'prixUnitaireHT', parseFloat(e.target.value) || 0)}
+                        required
+                      />
+                    </div>
+                    <div className="details-facture__modal-field">
+                      <label>Remise</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={ligne.remise}
+                        onChange={(e) => handleChangeLigne(index, 'remise', parseFloat(e.target.value) || 0)}
+                      />
+                    </div>
+                    <div className="details-facture__modal-field">
+                      <label>Montant HT</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={ligne.montantHT.toFixed(2)}
+                        onChange={(e) => handleChangeLigne(index, 'montantHT', parseFloat(e.target.value) || 0)}
+                        readOnly
+                        style={{ backgroundColor: '#f3f4f6' }}
+                      />
+                    </div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* Totaux */}
+          <div className="details-facture__modal-section">
+            <h3>Totaux</h3>
+            <div className="details-facture__modal-grid">
+              <div className="details-facture__modal-field">
+                <label>Total HT</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={factureModifiee.totalHT.toFixed(2)}
+                  onChange={(e) => handleChange('totalHT', parseFloat(e.target.value) || 0)}
+                />
+              </div>
+              <div className="details-facture__modal-field">
+                <label>Total TVA</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={factureModifiee.totalTVA.toFixed(2)}
+                  onChange={(e) => handleChange('totalTVA', parseFloat(e.target.value) || 0)}
+                />
+              </div>
+              <div className="details-facture__modal-field">
+                <label>Total TTC *</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={factureModifiee.totalTTC.toFixed(2)}
+                  onChange={(e) => handleChange('totalTTC', parseFloat(e.target.value) || 0)}
+                  required
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="details-facture__modal-footer">
             <button
               type="button"
-              onClick={() => setDebugOuvert(!debugOuvert)}
-              className="details-facture__debug-toggle"
+              onClick={onFermer}
+              className="details-facture__modal-btn details-facture__modal-btn--secondary"
             >
-              <Code size={18} />
-              <h3 className="details-facture__section-title" style={{ margin: 0 }}>
-                Données brutes extraites (Debug)
-              </h3>
-              {debugOuvert ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
+              Annuler
             </button>
-
-            {debugOuvert && (
-              <div className="details-facture__debug-content">
-                <div className="details-facture__debug-section">
-                  <h4>Texte extrait du PDF</h4>
-                  <pre className="details-facture__debug-text">
-                    {texteBrut}
-                  </pre>
-                    {typeof facture.donneesBrutes.texteComplet === 'string' && (
-                    <p style={{ fontSize: '0.85rem', color: '#6b7280', marginTop: '0.5rem' }}>
-                        Longueur totale: {facture.donneesBrutes.texteComplet.length} caractères
-                    </p>
-                  )}
-                </div>
-                <div className="details-facture__debug-section">
-                  <h4>Données parsées</h4>
-                  <pre className="details-facture__debug-json">
-                    {JSON.stringify({
-                      numero: facture.numero,
-                      date: facture.date.toISOString(),
-                      totalHT: facture.totalHT,
-                      totalTVA: facture.totalTVA,
-                      totalTTC: facture.totalTTC,
-                      nombreLignes: facture.lignes.length,
-                    }, null, 2)}
-                  </pre>
-                </div>
-                <div className="details-facture__debug-note">
-                  <strong>Note :</strong> Utilisez ces informations pour comparer avec la facture réelle et identifier les corrections à apporter au parser.
-                </div>
-              </div>
-            )}
+            <button
+              type="submit"
+              className="details-facture__modal-btn details-facture__modal-btn--primary"
+            >
+              Enregistrer
+            </button>
           </div>
-        )}
+        </form>
       </div>
     </div>
   );

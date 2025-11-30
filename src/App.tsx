@@ -2,8 +2,8 @@
  * Application principale de gestion des factures fournisseurs
  */
 
-import { useRef, useState } from 'react';
-import { FileText, BarChart3, Upload, Download, RotateCcw, Edit } from 'lucide-react';
+import { useRef, useState, useEffect } from 'react';
+import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard } from 'lucide-react';
 import { useFactures } from './hooks/useFactures';
 import { useImportPDF } from './hooks/useImportPDF';
 import { ListeFactures } from './components/ListeFactures';
@@ -12,13 +12,17 @@ import { StatistiquesComponent } from './components/Statistiques';
 import { ImportPDF } from './components/ImportPDF';
 import { ListeFichiersDisponibles } from './components/ListeFichiersDisponibles';
 import { EditeurParsing } from './components/EditeurParsing';
+import { Reglements } from './components/Reglements';
+import { VueFournisseur } from './components/VueFournisseur';
 import type { Facture } from './types/facture';
 import type { Fournisseur } from './types/facture';
 import { parserFacture } from '@parsers/index';
 import './App.css';
 import { lireFichierEnDataURL } from './utils/fileUtils';
+import { rechercherFacturesPerdues, afficherRapportDiagnostic, creerBackupFactures, nettoyerTousLesBackups } from './utils/diagnosticLocalStorage';
+import { chargerFactures } from './services/factureService';
 
-type Vue = 'factures' | 'statistiques' | 'import' | 'editeur';
+type Vue = 'factures' | 'statistiques' | 'import' | 'editeur' | 'reglements';
 
 function App() {
   const [vueActive, setVueActive] = useState<Vue>('factures');
@@ -36,8 +40,31 @@ function App() {
     setFournisseurFiltre,
     ajouterFacture,
     supprimerFacture,
+    mettreAJourFacture,
     remplacerFactures,
   } = useFactures();
+
+  // État pour gérer les fournisseurs sélectionnés dans la vue fournisseur
+  // Par défaut, afficher tous les fournisseurs
+  const [fournisseursSelectionnes, setFournisseursSelectionnes] = useState<Fournisseur[]>([]);
+
+  // Synchroniser fournisseursSelectionnes avec fournisseurFiltre quand il change depuis l'extérieur
+  useEffect(() => {
+    if (fournisseurFiltre && !fournisseursSelectionnes.includes(fournisseurFiltre)) {
+      setFournisseursSelectionnes([fournisseurFiltre]);
+    } else if (!fournisseurFiltre && fournisseursSelectionnes.length > 0 && fournisseursSelectionnes.length === 1) {
+      // Si le filtre est supprimé et qu'on avait un seul fournisseur sélectionné, on peut le garder ou le vider
+      // On garde pour l'instant
+    }
+  }, [fournisseurFiltre]);
+  
+  // Fonction pour forcer le rechargement des factures
+  const forcerRechargementFactures = () => {
+    const facturesChargees = chargerFactures();
+    remplacerFactures(facturesChargees);
+    setTermeRecherche('');
+    setFournisseurFiltre(null);
+  };
 
   const { importerFichiers, importEnCours, erreur, setErreur } = useImportPDF();
 
@@ -45,18 +72,56 @@ function App() {
     setErreur(null);
     const facturesImportees = await importerFichiers(fichiers, fournisseur);
     
+    if (facturesImportees.length === 0) {
+      return;
+    }
+
+    // Ajouter toutes les factures d'abord
     for (const facture of facturesImportees) {
       ajouterFacture(facture);
     }
 
-    if (facturesImportees.length > 0) {
-      // Basculer vers la vue factures après import
-      setVueActive('factures');
-      // Sélectionner la dernière facture importée
-      if (facturesImportees.length > 0) {
-        setFactureSelectionnee(facturesImportees[facturesImportees.length - 1]);
+    // Attendre un peu pour que toutes les sauvegardes soient terminées
+    // Puis recharger toutes les factures en une seule fois
+    await new Promise(resolve => setTimeout(resolve, 150));
+    
+    // Recharger toutes les factures depuis le localStorage
+    // Créer un nouvel array pour forcer la mise à jour React
+    let facturesChargees = [...chargerFactures()];
+    console.log('[Import] Factures chargées après import:', facturesChargees.length, 'factures importées:', facturesImportees.length);
+    
+    // Vérifier que toutes les factures importées sont bien présentes
+    const facturesImporteesIds = new Set(facturesImportees.map(f => f.id));
+    const facturesPresentes = facturesChargees.filter(f => facturesImporteesIds.has(f.id));
+    console.log('[Import] Factures importées présentes dans le chargement:', facturesPresentes.length, '/', facturesImportees.length);
+    
+    remplacerFactures(facturesChargees);
+    
+    // Si une facture est importée et qu'on est dans la vue fournisseur, 
+    // appliquer le filtre du fournisseur de la facture importée si aucun filtre n'est actif
+    const derniereFacture = facturesImportees[facturesImportees.length - 1];
+    if (derniereFacture && vueActive === 'factures') {
+      // Si le fournisseur de la facture importée n'est pas dans la sélection, l'ajouter
+      if (fournisseursSelectionnes.length > 0 && !fournisseursSelectionnes.includes(derniereFacture.fournisseur)) {
+        setFournisseursSelectionnes([...fournisseursSelectionnes, derniereFacture.fournisseur]);
+      } else if (fournisseursSelectionnes.length === 0 && !fournisseurFiltre) {
+        // Si aucun filtre n'est actif, sélectionner le fournisseur de la facture importée
+        setFournisseursSelectionnes([derniereFacture.fournisseur]);
+        setFournisseurFiltre(derniereFacture.fournisseur);
       }
     }
+    
+    // Basculer vers la vue factures après import
+    setVueActive('factures');
+    // Sélectionner la dernière facture importée
+    setFactureSelectionnee(derniereFacture);
+    
+    // Forcer un nouveau rechargement après un court délai pour s'assurer que tout est synchronisé
+    setTimeout(() => {
+      facturesChargees = [...chargerFactures()];
+      console.log('[Import] Rechargement final:', facturesChargees.length, 'factures');
+      remplacerFactures(facturesChargees);
+    }, 300);
   };
 
   const handleFactureSelect = (facture: Facture | null) => {
@@ -184,6 +249,36 @@ function App() {
           pdfOriginal,
         };
         ajouterFacture(factureComplete);
+        
+        // Attendre un peu pour que la sauvegarde soit terminée
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
+        // Recharger toutes les factures depuis le localStorage pour synchroniser
+        // Créer un nouvel array pour forcer la mise à jour React
+        const facturesChargees = [...chargerFactures()];
+        console.log('[ChargerFichier] Factures chargées après ajout:', facturesChargees.length);
+        remplacerFactures(facturesChargees);
+        
+        // Si on est dans la vue fournisseur, s'assurer que le fournisseur est sélectionné
+        if (vueActive === 'factures') {
+          if (fournisseursSelectionnes.length > 0 && !fournisseursSelectionnes.includes(fournisseur)) {
+            setFournisseursSelectionnes([...fournisseursSelectionnes, fournisseur]);
+          } else if (fournisseursSelectionnes.length === 0 && !fournisseurFiltre) {
+            setFournisseursSelectionnes([fournisseur]);
+            setFournisseurFiltre(fournisseur);
+          }
+        }
+        
+        // Basculer vers la vue factures et sélectionner la facture
+        setVueActive('factures');
+        setFactureSelectionnee(factureComplete);
+        
+        // Forcer un nouveau rechargement après un court délai pour s'assurer que tout est synchronisé
+        setTimeout(() => {
+          const facturesChargees2 = [...chargerFactures()];
+          console.log('[ChargerFichier] Rechargement final:', facturesChargees2.length, 'factures');
+          remplacerFactures(facturesChargees2);
+        }, 200);
         console.log('Facture ajoutée avec succès:', resultat.facture.numero, resultat.facture);
         
         // Afficher un message de succès ou d'avertissement
@@ -236,6 +331,70 @@ function App() {
 
   const handleRestaurerClick = () => {
     inputRestaurationRef.current?.click();
+  };
+
+
+  const handleDiagnostic = () => {
+    afficherRapportDiagnostic();
+    const resultat = rechercherFacturesPerdues();
+    
+    // Afficher toutes les factures LEHMANN trouvées
+    let message = `=== DIAGNOSTIC FACTURES ===\n\n`;
+    message += `Total factures LEHMANN: ${resultat.facturesLehmann.length}\n`;
+    message += `Factures F4/F5/F6 trouvées: ${resultat.facturesTrouvees.length}\n\n`;
+    
+    if (resultat.facturesLehmann.length > 0) {
+      message += `📋 Toutes les factures LEHMANN:\n`;
+      resultat.facturesLehmann.forEach(f => {
+        message += `- ${f.fichierPDF || 'N/A'} → Numéro parsé: ${f.numero}\n`;
+      });
+      message += `\n`;
+    }
+    
+    if (resultat.facturesTrouvees.length > 0) {
+      message += `✅ Factures F4/F5/F6 trouvées (par nom de fichier):\n`;
+      resultat.facturesTrouvees.forEach(f => {
+        message += `- ${f.fichierPDF} → Numéro parsé: ${f.numero}\n`;
+      });
+      message += `\nVoulez-vous restaurer ces factures ?`;
+      
+      const confirmer = window.confirm(message);
+      
+      if (confirmer) {
+        // Ajouter les factures trouvées
+        let restaurees = 0;
+        resultat.facturesTrouvees.forEach(facture => {
+          // Vérifier si la facture n'existe pas déjà (par ID ou par fichier PDF)
+          const existeDeja = toutesLesFactures.some(f => 
+            f.id === facture.id || 
+            f.fichierPDF === facture.fichierPDF
+          );
+          
+          if (!existeDeja) {
+            ajouterFacture(facture);
+            restaurees++;
+            console.log(`✅ Facture restaurée: ${facture.fichierPDF} (${facture.numero})`);
+          } else {
+            console.log(`⚠️ Facture déjà présente: ${facture.fichierPDF} (${facture.numero})`);
+          }
+        });
+        
+        if (restaurees > 0) {
+          // Forcer le rechargement et réinitialiser les filtres
+          forcerRechargementFactures();
+          alert(`✅ ${restaurees} facture(s) restaurée(s) avec succès !`);
+        } else {
+          alert(`ℹ️ Toutes les factures trouvées sont déjà présentes dans la liste.`);
+        }
+      }
+    } else {
+      message += `❌ Aucune facture F4/F5/F6 trouvée par nom de fichier.\n\n`;
+      message += `Vérifiez la console (F12) pour plus de détails.`;
+      alert(message);
+    }
+    
+    // Créer un backup maintenant
+    creerBackupFactures();
   };
 
   const handleRestaurerChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -320,6 +479,17 @@ function App() {
                 <Edit size={20} />
                 Éditeur
               </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setVueActive('reglements');
+                  setFactureSelectionnee(null);
+                }}
+                className={`app__nav-btn ${vueActive === 'reglements' ? 'app__nav-btn--active' : ''}`}
+              >
+                <CreditCard size={20} />
+                Règlements
+              </button>
             </nav>
             <button
               type="button"
@@ -338,6 +508,27 @@ function App() {
               <RotateCcw size={18} />
               Restaurer
             </button>
+            <button
+              type="button"
+              onClick={handleDiagnostic}
+              style={{
+                padding: '0.5rem 1rem',
+                border: '1px solid #f59e0b',
+                borderRadius: '6px',
+                background: 'white',
+                color: '#f59e0b',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: '500',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                marginLeft: '0.5rem',
+              }}
+              title="Diagnostiquer et récupérer les factures perdues"
+            >
+              🔍 Diagnostic
+            </button>
             <input
               ref={inputRestaurationRef}
               type="file"
@@ -351,25 +542,48 @@ function App() {
 
       <main className="app__main">
         {vueActive === 'factures' && (
-          <div className="app__factures-layout">
-            <div className="app__factures-list">
-              <ListeFactures
-                factures={factures}
-                termeRecherche={termeRecherche}
-                onTermeRechercheChange={setTermeRecherche}
-                fournisseurFiltre={fournisseurFiltre}
-                onFournisseurFiltreChange={setFournisseurFiltre}
-                onFactureSelect={handleFactureSelect}
-                factureSelectionnee={factureSelectionnee || undefined}
-                onSupprimerFacture={supprimerFacture}
+          <div className="app__vue-fournisseur-layout">
+            <div className="app__vue-fournisseur">
+              <VueFournisseur
+                key={`vue-fournisseur-${toutesLesFactures.length}`}
+                fournisseursSelectionnes={fournisseursSelectionnes.length > 0 ? fournisseursSelectionnes : (fournisseurFiltre ? [fournisseurFiltre] : [])}
+                toutesLesFactures={toutesLesFactures}
+                onFournisseursChange={(fournisseurs) => {
+                  setFournisseursSelectionnes(fournisseurs);
+                  if (fournisseurs.length === 1) {
+                    setFournisseurFiltre(fournisseurs[0]);
+                  } else if (fournisseurs.length === 0) {
+                    setFournisseurFiltre(null);
+                  }
+                }}
+                onClose={() => {
+                  // Ne pas fermer complètement, juste réinitialiser les sélections
+                  setFournisseurFiltre(null);
+                  setFournisseursSelectionnes([]);
+                  setFactureSelectionnee(null);
+                }}
+                onFactureSelect={(facture) => {
+                  handleFactureSelect(facture);
+                }}
+                onFactureUpdate={() => {
+                  // Recharger les factures pour mettre à jour les états de règlement
+                  const facturesChargees = chargerFactures();
+                  remplacerFactures(facturesChargees);
+                }}
               />
             </div>
-            <div className="app__factures-details">
-              <DetailsFacture
-                facture={factureSelectionnee}
-                onClose={handleCloseDetails}
-              />
-            </div>
+            {factureSelectionnee && (
+              <div className="app__vue-fournisseur-details">
+                <DetailsFacture
+                  facture={factureSelectionnee}
+                  onClose={handleCloseDetails}
+                  onUpdate={(factureModifiee) => {
+                    mettreAJourFacture(factureModifiee);
+                    setFactureSelectionnee(factureModifiee);
+                  }}
+                />
+              </div>
+            )}
           </div>
         )}
 
@@ -489,6 +703,12 @@ function App() {
                 <p>{erreur}</p>
               </div>
             )}
+          </div>
+        )}
+
+        {vueActive === 'reglements' && (
+          <div className="app__reglements">
+            <Reglements factures={toutesLesFactures} />
           </div>
         )}
       </main>

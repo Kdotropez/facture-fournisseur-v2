@@ -17,34 +17,50 @@ export async function detecterFournisseurDepuisContenu(fichier: File): Promise<F
     const textePDF = await extraireTextePDF(fichier);
     const texteUpper = textePDF.toUpperCase();
     
-    // ITALESSE : prioritaires (FATTURA RIEPILOGATIVA, VELA, ITALESSE S.p.A.)
+    console.log('[DETECTION] Détection du fournisseur depuis le contenu...');
+    console.log('[DETECTION] Extrait (200 premiers caractères):', textePDF.substring(0, 200));
+    
+    // PRIORITÉ 1: LEHMANN F (vérifier en premier pour éviter les faux positifs)
+    // Mots-clés très spécifiques à LEHMANN
     if (
-      texteUpper.includes('FATTURA RIEPILOGATIVA') ||
-      texteUpper.includes('ITALESSE S.P.A.') ||
-      texteUpper.includes('ITALESSE SPA') ||
-      (texteUpper.includes('VELA') && texteUpper.includes('BUCKET')) ||
-      texteUpper.includes('RELAIS DES COCHES')
+      texteUpper.includes('LEHMANN F') ||
+      texteUpper.includes('LEHMANN FRERES') ||
+      texteUpper.includes('LEHMANN FRÈRES') ||
+      texteUpper.includes('LEHMANN FRÈRE') ||
+      (texteUpper.includes('LEHMANN') && texteUpper.includes('FACTURE')) ||
+      (texteUpper.includes('LEHMANN') && /F\s*\d+/.test(textePDF)) // "F 1", "F1", etc.
     ) {
-      return 'ITALESSE';
+      console.log('[DETECTION] ✅ LEHMANN F détecté');
+      return 'LEHMANN F';
     }
     
-    // RB DRINKS
+    // PRIORITÉ 2: RB DRINKS
     if (
       texteUpper.includes('RB DRINKS') ||
       texteUpper.includes('WWW.RBDRINKS.FR') ||
       texteUpper.includes('CONTACT@RBDRINKS.FR')
     ) {
+      console.log('[DETECTION] ✅ RB DRINKS détecté');
       return 'RB DRINKS';
     }
     
-    // LEHMANN F
-    if (texteUpper.includes('LEHMANN')) {
-      return 'LEHMANN F';
+    // PRIORITÉ 3: ITALESSE (critères plus stricts pour éviter les faux positifs)
+    // Ne détecter ITALESSE que si on a des mots-clés TRÈS spécifiques
+    if (
+      texteUpper.includes('FATTURA RIEPILOGATIVA') ||
+      texteUpper.includes('ITALESSE S.P.A.') ||
+      texteUpper.includes('ITALESSE SPA') ||
+      (texteUpper.includes('VELA') && texteUpper.includes('BUCKET') && !texteUpper.includes('LEHMANN')) ||
+      (texteUpper.includes('RELAIS DES COCHES') && !texteUpper.includes('LEHMANN'))
+    ) {
+      console.log('[DETECTION] ✅ ITALESSE détecté');
+      return 'ITALESSE';
     }
     
+    console.log('[DETECTION] ❌ Aucun fournisseur détecté');
     return null;
   } catch (error) {
-    console.warn('Erreur lors de la détection du fournisseur depuis le contenu:', error);
+    console.warn('[DETECTION] Erreur lors de la détection du fournisseur depuis le contenu:', error);
     return null;
   }
 }
@@ -67,20 +83,26 @@ export function useImportPDF() {
         // D'abord, essayer de détecter depuis le contenu du PDF
         fournisseurDetecte = await detecterFournisseurDepuisContenu(fichier) || undefined;
         
-        // Si pas trouvé, essayer depuis le nom du fichier
-        if (!fournisseurDetecte) {
-          const nomFichier = fichier.name.toUpperCase();
-          
-          // ITALESSE : fichiers "RELAIS DES COCHES F. XXXX.pdf"
-          if (nomFichier.includes('RELAIS DES COCHES')) {
-            fournisseurDetecte = 'ITALESSE';
-          } else if (nomFichier.includes('RB') || nomFichier.startsWith('RB')) {
-            fournisseurDetecte = 'RB DRINKS';
-          } else if (nomFichier.includes('LEHMANN')) {
-            fournisseurDetecte = 'LEHMANN F';
-          } else if (nomFichier.includes('I') || nomFichier.startsWith('I')) {
-            fournisseurDetecte = 'ITALESSE';
-          } else {
+          // Si pas trouvé, essayer depuis le nom du fichier
+          if (!fournisseurDetecte) {
+            const nomFichier = fichier.name.toUpperCase();
+            console.log('[DETECTION] Recherche depuis le nom de fichier:', nomFichier);
+            
+            // LEHMANN F : fichiers "F1.pdf", "F2.pdf", etc. (PRIORITÉ)
+            if (nomFichier.match(/^F\d+\.PDF$/i) || nomFichier.includes('LEHMANN')) {
+              fournisseurDetecte = 'LEHMANN F';
+              console.log('[DETECTION] ✅ LEHMANN F détecté depuis le nom de fichier');
+            } 
+            // RB DRINKS
+            else if (nomFichier.includes('RB') || nomFichier.startsWith('RB')) {
+              fournisseurDetecte = 'RB DRINKS';
+              console.log('[DETECTION] ✅ RB DRINKS détecté depuis le nom de fichier');
+            } 
+            // ITALESSE : fichiers "RELAIS DES COCHES F. XXXX.pdf" ou "I1.pdf", etc.
+            else if (nomFichier.includes('RELAIS DES COCHES') || nomFichier.match(/^I\d+\.PDF$/i)) {
+              fournisseurDetecte = 'ITALESSE';
+              console.log('[DETECTION] ✅ ITALESSE détecté depuis le nom de fichier');
+            } else {
             throw new Error(
               'Impossible de détecter le fournisseur. Veuillez le sélectionner manuellement.'
             );

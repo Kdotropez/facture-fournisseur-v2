@@ -205,60 +205,117 @@
   font-size: 1rem;
 }
 
-.liste-factures__grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
-  gap: 1rem;
+.liste-factures__table-container {
+  overflow-x: auto;
   overflow-y: auto;
   flex: 1;
-}
-
-.liste-factures__card {
-  background: #f9fafb;
-  border: 2px solid transparent;
+  border: 1px solid #e5e7eb;
   border-radius: 8px;
-  padding: 1.25rem;
-  cursor: pointer;
-  transition: all 0.2s;
-  position: relative;
 }
 
-.liste-factures__card:hover {
-  border-color: #3b82f6;
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(59, 130, 246, 0.15);
+.liste-factures__table {
+  width: 100%;
+  border-collapse: collapse;
+  background: white;
 }
 
-.liste-factures__card--selected {
-  border-color: #3b82f6;
-  background: #eff6ff;
-}
-
-.liste-factures__card--selectionnee {
-  border-color: #3b82f6;
-  background: #dbeafe;
-}
-
-.liste-factures__checkbox {
-  position: absolute;
-  top: 1rem;
-  left: 1rem;
+.liste-factures__table thead {
+  background: #f9fafb;
+  position: sticky;
+  top: 0;
   z-index: 10;
 }
 
-.liste-factures__checkbox input[type="checkbox"] {
-  width: 20px;
-  height: 20px;
+.liste-factures__table th {
+  padding: 0.75rem 1rem;
+  text-align: left;
+  font-size: 0.875rem;
+  font-weight: 600;
+  color: #374151;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  border-bottom: 2px solid #e5e7eb;
+}
+
+.liste-factures__th-checkbox {
+  width: 40px;
+  text-align: center;
+}
+
+.liste-factures__th-montant {
+  text-align: right;
+}
+
+.liste-factures__th-actions {
+  width: 80px;
+  text-align: center;
+}
+
+.liste-factures__row {
+  cursor: pointer;
+  transition: background-color 0.15s;
+  border-bottom: 1px solid #e5e7eb;
+}
+
+.liste-factures__row:hover {
+  background-color: #f9fafb;
+}
+
+.liste-factures__row--selected {
+  background-color: #eff6ff;
+  border-left: 3px solid #3b82f6;
+}
+
+.liste-factures__row--selectionnee {
+  background-color: #dbeafe;
+}
+
+.liste-factures__row td {
+  padding: 1rem;
+  font-size: 0.9rem;
+  color: #374151;
+  vertical-align: middle;
+}
+
+.liste-factures__td-checkbox {
+  text-align: center;
+  width: 40px;
+}
+
+.liste-factures__td-checkbox input[type="checkbox"] {
+  width: 18px;
+  height: 18px;
   cursor: pointer;
   accent-color: #3b82f6;
 }
 
-.liste-factures__card-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1rem;
-  gap: 0.5rem;
+.liste-factures__td-numero {
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.liste-factures__td-fournisseur {
+  min-width: 120px;
+}
+
+.liste-factures__td-date {
+  min-width: 120px;
+}
+
+.liste-factures__td-lignes {
+  color: #6b7280;
+  font-size: 0.85rem;
+}
+
+.liste-factures__td-montant {
+  text-align: right;
+  font-weight: 600;
+  color: #1a1a1a;
+}
+
+.liste-factures__td-actions {
+  text-align: center;
+  width: 80px;
 }
 
 .liste-factures__btn-supprimer {
@@ -274,10 +331,10 @@
   cursor: pointer;
   transition: all 0.2s;
   flex-shrink: 0;
-  opacity: 0;
+  opacity: 0.7;
 }
 
-.liste-factures__card:hover .liste-factures__btn-supprimer {
+.liste-factures__row:hover .liste-factures__btn-supprimer {
   opacity: 1;
 }
 
@@ -305,42 +362,16 @@
   color: #1a1a1a;
 }
 
-.liste-factures__card-body {
-  margin-bottom: 1rem;
-}
-
 .liste-factures__date {
   display: flex;
   align-items: center;
   gap: 0.5rem;
   color: #6b7280;
   font-size: 0.9rem;
-  margin-bottom: 0.5rem;
-}
-
-.liste-factures__lignes {
-  color: #6b7280;
-  font-size: 0.85rem;
-}
-
-.liste-factures__card-footer {
-  padding-top: 1rem;
-  border-top: 1px solid #e5e7eb;
-}
-
-.liste-factures__montant {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-}
-
-.liste-factures__montant-label {
-  font-size: 0.85rem;
-  color: #6b7280;
 }
 
 .liste-factures__montant-value {
-  font-size: 1.25rem;
+  font-size: 1rem;
   font-weight: 600;
   color: #1a1a1a;
 }
@@ -420,8 +451,12 @@
 }
 
 @media (max-width: 768px) {
-  .liste-factures__grid {
-    grid-template-columns: 1fr;
+  .liste-factures__table-container {
+    overflow-x: auto;
+  }
+
+  .liste-factures__table {
+    min-width: 600px;
   }
 
   .liste-factures__filtres {
@@ -444,6 +479,12 @@
   .liste-factures__btn-action {
     flex: 1;
     justify-content: center;
+  }
+
+  .liste-factures__table th,
+  .liste-factures__row td {
+    padding: 0.75rem 0.5rem;
+    font-size: 0.85rem;
   }
 }
 

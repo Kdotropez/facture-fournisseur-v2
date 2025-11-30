@@ -21,17 +21,23 @@ export function useFactures() {
   const [termeRecherche, setTermeRecherche] = useState('');
   const [fournisseurFiltre, setFournisseurFiltre] = useState<Fournisseur | null>(null);
 
-  // Charger les factures au montage
-  useEffect(() => {
+  // Charger les factures au montage et après chaque modification
+  const rechargerFactures = useCallback(() => {
     const facturesChargees = chargerFactures();
     setFactures(facturesChargees);
     setChargement(false);
   }, []);
 
+  useEffect(() => {
+    rechargerFactures();
+  }, [rechargerFactures]);
+
   // Ajouter une facture
   const ajouterFacture = useCallback((facture: Facture) => {
     ajouterFactureService(facture);
-    setFactures(prev => [...prev, facture]);
+    // Recharger depuis le localStorage pour être sûr d'avoir les dernières données
+    const facturesChargees = chargerFactures();
+    setFactures(facturesChargees);
   }, []);
 
   // Supprimer une facture

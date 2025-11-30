@@ -148,6 +148,25 @@
   overflow: hidden;
 }
 
+.app__vue-fournisseur-layout {
+  display: flex;
+  flex-direction: column;
+  gap: 2rem;
+  height: calc(100vh - 200px);
+}
+
+.app__vue-fournisseur {
+  flex: 0 0 auto;
+  max-height: 60%;
+  overflow-y: auto;
+}
+
+.app__vue-fournisseur-details {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+
 .app__statistiques {
   max-width: 1200px;
   margin: 0 auto;
