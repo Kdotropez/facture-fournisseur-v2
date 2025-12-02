@@ -231,3 +231,4 @@ Le système d'apprentissage peut être amélioré pour :
 
 **En résumé** : Le système apprend **progressivement** à partir de vos corrections. Une seule facture peut suffire si le format est uniforme, mais plusieurs factures permettent une meilleure robustesse, surtout si le fournisseur a plusieurs formats différents.
 
+

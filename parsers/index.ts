@@ -6,6 +6,7 @@
 import { parserRBDrinks } from './rb-drinks';
 import { parserLehmann } from './lehmann';
 import { parserItalesse } from './italesse';
+import { parserStem } from './stem';
 import type { Parser, ParserResult } from './types';
 import type { Fournisseur } from '../src/types/facture';
 import { extraireTextePDF } from '../src/utils/pdfParser';
@@ -19,6 +20,7 @@ export const parseurs: Record<Fournisseur, Parser> = {
   'RB DRINKS': parserRBDrinks,
   'LEHMANN F': parserLehmann,
   'ITALESSE': parserItalesse,
+  'STEM': parserStem,
 };
 
 /**
@@ -222,7 +224,32 @@ export function detecterFournisseur(chemin: string): Fournisseur | null {
  * Liste tous les fournisseurs disponibles
  */
 export function obtenirFournisseurs(): Fournisseur[] {
-  return Object.keys(parseurs) as Fournisseur[];
+  const deBase = Object.keys(parseurs) as Fournisseur[];
+
+  // Ajouter les fournisseurs personnalisés mémorisés dans le navigateur
+  if (typeof window === 'undefined') {
+    return deBase;
+  }
+
+  try {
+    const persoStr = localStorage.getItem('fournisseurs-personnalises');
+    if (!persoStr) return deBase;
+
+    const perso = JSON.parse(persoStr) as string[];
+    const tous = [...deBase];
+
+    perso.forEach((nom) => {
+      const nomTrim = (nom || '').trim();
+      if (!nomTrim) return;
+      if (!tous.includes(nomTrim as Fournisseur)) {
+        tous.push(nomTrim as Fournisseur);
+      }
+    });
+
+    return tous;
+  } catch {
+    return deBase;
+  }
 }
 
 

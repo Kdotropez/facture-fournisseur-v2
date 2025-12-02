@@ -3,32 +3,43 @@
  */
 
 import { useRef, useState, useEffect } from 'react';
-import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard } from 'lucide-react';
+import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard, FileSignature, X } from 'lucide-react';
 import { useFactures } from './hooks/useFactures';
-import { useImportPDF } from './hooks/useImportPDF';
+import { useDevis } from './hooks/useDevis';
+import { useImportPDF, detecterFournisseurDepuisContenu } from './hooks/useImportPDF';
 import { DetailsFacture } from './components/DetailsFacture';
+import { DetailsDevis } from './components/DetailsDevis';
 import { StatistiquesComponent } from './components/Statistiques';
 import { ImportPDF } from './components/ImportPDF';
 import { ListeFichiersDisponibles } from './components/ListeFichiersDisponibles';
 import { EditeurParsing } from './components/EditeurParsing';
 import { Reglements } from './components/Reglements';
 import { VueFournisseur } from './components/VueFournisseur';
+import { ListeDevis } from './components/ListeDevis';
+import { EditeurDevis } from './components/EditeurDevis';
 import type { Facture } from './types/facture';
+import type { Devis } from './types/devis';
 import type { Fournisseur } from './types/facture';
-import { parserFacture } from '@parsers/index';
+import { parserFacture, obtenirFournisseurs } from '@parsers/index';
 import './App.css';
 import { lireFichierEnDataURL } from './utils/fileUtils';
 import { rechercherFacturesPerdues, afficherRapportDiagnostic, creerBackupFactures } from './utils/diagnosticLocalStorage';
 import { chargerFactures } from './services/factureService';
 
-type Vue = 'factures' | 'statistiques' | 'import' | 'editeur' | 'reglements';
+type Vue = 'factures' | 'devis' | 'statistiques' | 'import' | 'editeur' | 'reglements';
 
 function App() {
   const [vueActive, setVueActive] = useState<Vue>('factures');
   const [factureSelectionnee, setFactureSelectionnee] = useState<Facture | null>(null);
+  const [devisSelectionne, setDevisSelectionne] = useState<Devis | null>(null);
   const [fichierEnChargement, setFichierEnChargement] = useState<string | null>(null);
   const [fichierPourEditeur, setFichierPourEditeur] = useState<File | null>(null);
   const inputRestaurationRef = useRef<HTMLInputElement>(null);
+  const inputImportDevisRef = useRef<HTMLInputElement>(null);
+  const [editeurDevisOuvert, setEditeurDevisOuvert] = useState(false);
+  const [fichierDevisEnAttente, setFichierDevisEnAttente] = useState<File | null>(null);
+  const [fournisseurManuelDevis, setFournisseurManuelDevis] = useState<string>('');
+  const [nouveauFournisseurDevis, setNouveauFournisseurDevis] = useState<string>('');
 
   const {
     toutesLesFactures,
@@ -39,6 +50,18 @@ function App() {
     mettreAJourFacture,
     remplacerFactures,
   } = useFactures();
+
+  const {
+    devis: devisFiltres,
+    tousLesDevis,
+    termeRecherche: termeRechercheDevis,
+    setTermeRecherche: setTermeRechercheDevis,
+    fournisseurFiltre: fournisseurFiltreDevis,
+    setFournisseurFiltre: setFournisseurFiltreDevis,
+    ajouterDevis,
+    supprimerDevis,
+    mettreAJourDevis,
+  } = useDevis();
 
   // État pour gérer les fournisseurs sélectionnés dans la vue fournisseur
   // Par défaut, afficher tous les fournisseurs
@@ -124,6 +147,20 @@ function App() {
     setFactureSelectionnee(facture);
   };
 
+  const handleDevisSelect = (devis: Devis | null) => {
+    setDevisSelectionne(devis);
+  };
+
+  const handleNouveauDevis = () => {
+    setEditeurDevisOuvert(true);
+  };
+
+  const handleDevisCree = (devis: Devis) => {
+    ajouterDevis(devis);
+    setDevisSelectionne(devis);
+    setEditeurDevisOuvert(false);
+  };
+
   const handleVoirFacture = (facture: Facture) => {
     setFactureSelectionnee(facture);
     setVueActive('factures');
@@ -147,6 +184,65 @@ function App() {
     setVueActive('factures');
     setFactureSelectionnee(facture);
     setErreur(null);
+  };
+
+  // Crée un devis à partir d'un PDF et d'un fournisseur choisi
+  const creerDevisDepuisPDF = async (fichier: File, fournisseur: Fournisseur) => {
+    const resultat = await parserFacture(fichier, fournisseur);
+
+    if (resultat.erreurs && resultat.erreurs.length > 0) {
+      throw new Error(resultat.erreurs.join(', '));
+    }
+
+    const pdfOriginal = await lireFichierEnDataURL(fichier);
+    const facture = resultat.facture;
+
+    const devis: Devis = {
+      id: `devis-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      fournisseur: facture.fournisseur,
+      numero: facture.numero,
+      date: facture.date,
+      lignes: facture.lignes,
+      totalHT: facture.totalHT,
+      totalTVA: facture.totalTVA,
+      totalTTC: facture.totalTTC,
+      dateImport: new Date(),
+      statut: 'en_attente',
+      facturesLieesIds: [],
+      fichierPDF: facture.fichierPDF ?? fichier.name,
+      pdfOriginal: facture.pdfOriginal ?? pdfOriginal,
+      donneesBrutes: facture.donneesBrutes,
+    };
+
+    ajouterDevis(devis);
+    setDevisSelectionne(devis);
+    setVueActive('devis');
+  };
+
+  // Importer un devis depuis un PDF avec sélection manuelle du fournisseur si nécessaire
+  const handleImporterDevisDepuisFichiers = async (fichiers: File[]) => {
+    setErreur(null);
+    const fichier = fichiers[0];
+    if (!fichier) return;
+
+    try {
+      const fournisseurDetecte = await detecterFournisseurDepuisContenu(fichier);
+
+      if (!fournisseurDetecte) {
+        // Impossible de détecter automatiquement : demander à l'utilisateur
+        setFichierDevisEnAttente(fichier);
+        setFournisseurManuelDevis('');
+        setNouveauFournisseurDevis('');
+        return;
+      }
+
+      await creerDevisDepuisPDF(fichier, fournisseurDetecte);
+    } catch (error) {
+      const messageErreur = error instanceof Error
+        ? error.message
+        : 'Erreur lors de l’import du devis';
+      setErreur(messageErreur);
+    }
   };
 
   // Charger un fichier avec contrôle (éditeur)
@@ -436,11 +532,24 @@ function App() {
                 onClick={() => {
                   setVueActive('factures');
                   setFactureSelectionnee(null);
+                  setDevisSelectionne(null);
                 }}
                 className={`app__nav-btn ${vueActive === 'factures' ? 'app__nav-btn--active' : ''}`}
               >
                 <FileText size={20} />
                 Factures
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setVueActive('devis');
+                  setFactureSelectionnee(null);
+                  setDevisSelectionne(null);
+                }}
+                className={`app__nav-btn ${vueActive === 'devis' ? 'app__nav-btn--active' : ''}`}
+              >
+                <FileSignature size={20} />
+                Devis
               </button>
               <button
                 type="button"
@@ -578,6 +687,226 @@ function App() {
                     setFactureSelectionnee(factureModifiee);
                   }}
                 />
+              </div>
+            )}
+          </div>
+        )}
+
+        {vueActive === 'devis' && (
+          <div className="app__vue-fournisseur-layout">
+            <div className="app__vue-fournisseur">
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1rem' }}>
+                <h2 style={{ margin: 0, fontSize: '1.25rem', color: '#1a1a1a' }}>Devis fournisseurs</h2>
+                <div style={{ display: 'flex', gap: '0.5rem' }}>
+                  <button
+                    type="button"
+                    onClick={handleNouveauDevis}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      border: '1px solid #10b981',
+                      borderRadius: '6px',
+                      background: 'white',
+                      color: '#10b981',
+                      cursor: 'pointer',
+                      fontSize: '0.9rem',
+                      fontWeight: 500,
+                    }}
+                  >
+                    + Nouveau devis
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => inputImportDevisRef.current?.click()}
+                    style={{
+                      padding: '0.5rem 1rem',
+                      border: '1px solid #3b82f6',
+                      borderRadius: '6px',
+                      background: 'white',
+                      color: '#3b82f6',
+                      cursor: 'pointer',
+                      fontSize: '0.9rem',
+                      fontWeight: 500,
+                    }}
+                    disabled={importEnCours}
+                  >
+                    Importer un devis (PDF)
+                  </button>
+                  <input
+                    ref={inputImportDevisRef}
+                    type="file"
+                    accept="application/pdf"
+                    style={{ display: 'none' }}
+                    onChange={async (e) => {
+                      const files = e.target.files;
+                      if (!files || files.length === 0) return;
+                      await handleImporterDevisDepuisFichiers(Array.from(files));
+                      e.target.value = '';
+                    }}
+                  />
+                </div>
+              </div>
+              <ListeDevis
+                devis={devisFiltres}
+                termeRecherche={termeRechercheDevis}
+                onTermeRechercheChange={setTermeRechercheDevis}
+                fournisseurFiltre={fournisseurFiltreDevis}
+                onFournisseurFiltreChange={setFournisseurFiltreDevis}
+                onDevisSelect={handleDevisSelect}
+                devisSelectionne={devisSelectionne}
+                onSupprimerDevis={(id) => {
+                  supprimerDevis(id);
+                  if (devisSelectionne && devisSelectionne.id === id) {
+                    setDevisSelectionne(null);
+                  }
+                }}
+              />
+              {erreur && (
+                <div className="app__error" style={{ marginTop: '1rem' }}>
+                  <p>{erreur}</p>
+                </div>
+              )}
+            </div>
+            {devisSelectionne && (
+              <div className="app__vue-fournisseur-details">
+                <DetailsDevis
+                  devis={devisSelectionne}
+                  toutesLesFactures={toutesLesFactures}
+                  onClose={() => setDevisSelectionne(null)}
+                  onUpdate={(devisModifie) => {
+                    mettreAJourDevis(devisModifie);
+                    setDevisSelectionne(devisModifie);
+                  }}
+                />
+              </div>
+            )}
+            {editeurDevisOuvert && (
+              <EditeurDevis
+                onSauvegarder={handleDevisCree}
+                onFermer={() => setEditeurDevisOuvert(false)}
+              />
+            )}
+            {fichierDevisEnAttente && (
+              <div
+                className="details-facture__modal-overlay"
+                onClick={() => setFichierDevisEnAttente(null)}
+              >
+                <div
+                  className="details-facture__modal"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  <div className="details-facture__modal-header">
+                    <h2>Sélectionner le fournisseur du devis</h2>
+                    <button
+                      type="button"
+                      onClick={() => setFichierDevisEnAttente(null)}
+                      className="details-facture__modal-close"
+                      aria-label="Fermer"
+                    >
+                      <X size={24} />
+                    </button>
+                  </div>
+                  <div className="details-facture__modal-form" style={{ padding: '1.5rem' }}>
+                    <p style={{ marginBottom: '1rem', fontSize: '0.9rem', color: '#4b5563' }}>
+                      Le fournisseur n’a pas pu être détecté automatiquement dans le PDF du devis
+                      <br />
+                      <strong>{fichierDevisEnAttente.name}</strong>
+                      <br />
+                      Merci de choisir un fournisseur existant ou d’en saisir un nouveau.
+                    </p>
+                    <div className="details-facture__modal-section" style={{ borderBottom: 'none', padding: 0 }}>
+                      <div className="details-facture__modal-grid">
+                        <div className="details-facture__modal-field">
+                          <label>Fournisseur existant</label>
+                          <select
+                            value={fournisseurManuelDevis}
+                            onChange={(e) => {
+                              setFournisseurManuelDevis(e.target.value);
+                            }}
+                          >
+                            <option value="">— Choisir —</option>
+                            {(() => {
+                              try {
+                                return obtenirFournisseurs();
+                              } catch (e) {
+                                console.error('Erreur lors de la récupération des fournisseurs:', e);
+                                return [] as Fournisseur[];
+                              }
+                            })().map((f) => (
+                              <option key={f} value={f}>
+                                {f}
+                              </option>
+                            ))}
+                          </select>
+                        </div>
+                        <div className="details-facture__modal-field">
+                          <label>Nouveau fournisseur (si absent de la liste)</label>
+                          <input
+                            type="text"
+                            placeholder="Nom du nouveau fournisseur"
+                            value={nouveauFournisseurDevis}
+                            onChange={(e) => {
+                              setNouveauFournisseurDevis(e.target.value);
+                            }}
+                          />
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                  <div className="details-facture__modal-footer">
+                    <button
+                      type="button"
+                      onClick={() => setFichierDevisEnAttente(null)}
+                      className="details-facture__modal-btn details-facture__modal-btn--secondary"
+                    >
+                      Annuler
+                    </button>
+                    <button
+                      type="button"
+                      className="details-facture__modal-btn details-facture__modal-btn--primary"
+                      onClick={async () => {
+                        if (!fichierDevisEnAttente) return;
+                        let nom =
+                          fournisseurManuelDevis ||
+                          nouveauFournisseurDevis.trim();
+                        if (!nom) {
+                          setErreur('Veuillez choisir ou saisir un fournisseur pour le devis.');
+                          return;
+                        }
+                        nom = nom.trim();
+
+                        // Enregistrer éventuellement comme fournisseur personnalisé
+                        try {
+                          const cle = 'fournisseurs-personnalises';
+                          const exist = localStorage.getItem(cle);
+                          const liste: string[] = exist ? JSON.parse(exist) : [];
+                          if (!liste.includes(nom)) {
+                            liste.push(nom);
+                            localStorage.setItem(cle, JSON.stringify(liste));
+                          }
+                        } catch {
+                          // Ignorer les erreurs de stockage
+                        }
+
+                        try {
+                          await creerDevisDepuisPDF(
+                            fichierDevisEnAttente,
+                            nom as Fournisseur
+                          );
+                          setFichierDevisEnAttente(null);
+                          setFournisseurManuelDevis('');
+                          setNouveauFournisseurDevis('');
+                        } catch (error) {
+                          const messageErreur = error instanceof Error
+                            ? error.message
+                            : 'Erreur lors de la création du devis';
+                          setErreur(messageErreur);
+                        }
+                      }}
+                    >
+                      Valider le fournisseur
+                    </button>
+                  </div>
+                </div>
               </div>
             )}
           </div>

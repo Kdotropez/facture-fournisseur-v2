@@ -92,3 +92,4 @@ Si le système ne fonctionne toujours pas :
 3. **Testez** avec une facture similaire
 4. **Partagez les messages de la console** si vous avez besoin d'aide
 
+

@@ -7,6 +7,8 @@ export type Fournisseur = string; // Permet d'ajouter de nouveaux fournisseurs d
 export interface LigneProduit {
   /** Description du produit */
   description: string;
+  /** Description traduite / normalisée en français (optionnelle) */
+  descriptionFR?: string;
   /** Référence fournisseur (optionnel) */
   refFournisseur?: string;
   /** BAT - Référence du logo (optionnel) */
@@ -17,12 +19,24 @@ export interface LigneProduit {
   couleur?: string;
   /** Quantité */
   quantite: number;
+  /** Quantité facturée saisie manuellement (pour comparaison devis/factures) */
+  quantiteFactureeManuelle?: number;
   /** Prix unitaire HT */
   prixUnitaireHT: number;
   /** Remise (montant) */
   remise: number;
   /** Montant HT de la ligne */
   montantHT: number;
+  /** Historique des réceptions (par BL / livraison) pour les devis */
+  receptions?: Array<{
+    id: string;
+    /** Numéro de BL / livraison (optionnel) */
+    numero?: string;
+    /** Date de réception (ISO string) */
+    date: string;
+    /** Quantité reçue sur cette livraison */
+    quantite: number;
+  }>;
 }
 
 export interface DonneesBrutesFacture {
@@ -31,6 +45,12 @@ export interface DonneesBrutesFacture {
   totalHTBrut?: number;
   remise?: number;
   netHT?: number;
+  /** Total HT FOB (hors transport/douanes) si disponible */
+  totalHTFOB?: number;
+  /** Transport et douanes (montant additionnel) si disponible */
+  transportEtDouanes?: number;
+  /** Total HT global (FOB + transport/douanes) si disponible */
+  totalHTGlobal?: number;
   [cle: string]: unknown;
 }
 

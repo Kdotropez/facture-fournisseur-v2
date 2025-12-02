@@ -133,3 +133,4 @@ export function obtenirReferencesParFournisseur(fournisseur: Fournisseur): Refer
     .sort((a, b) => (b.nombreUtilisations || 0) - (a.nombreUtilisations || 0));
 }
 
+

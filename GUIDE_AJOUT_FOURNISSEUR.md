@@ -179,3 +179,4 @@ Consultez les parseurs existants pour des exemples :
 - `parsers/lehmann.ts` : Parser avec gestion de formats spécifiques
 - `parsers/italesse.ts` : Parser avec extraction multi-pages
 
+
