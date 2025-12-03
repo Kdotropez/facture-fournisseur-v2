@@ -130,11 +130,11 @@ export function VueFournisseur({
     console.log('[VueFournisseur] Mise à jour forcée, factures:', toutesLesFactures.length, 'IDs:', ids.substring(0, 100));
   }, [toutesLesFactures.length, toutesLesFactures.map(f => f.id).join(',')]);
 
-  // Fonction pour normaliser le nom du fournisseur
+  // Fonction pour normaliser le nom du fournisseur (regrouper les variantes LEHMANN)
   const normaliserFournisseur = (fournisseur: string): string => {
     const upper = fournisseur.toUpperCase();
     if (upper.includes('LEHMANN')) {
-      return 'LEHMANN F';
+      return 'LEHMANN';
     }
     return fournisseur;
   };
@@ -173,9 +173,16 @@ export function VueFournisseur({
       exercicesSelectionnes: exercicesSelectionnes,
       facturesParFournisseur,
       facturesFiltrees: facturesFiltrees.length,
-      toutesLesFacturesLehmann: toutesLesFactures.filter(f => 
-        normaliserFournisseur(f.fournisseur) === 'LEHMANN F'
-      ).map(f => ({ numero: f.numero, fournisseur: f.fournisseur, fichierPDF: f.fichierPDF, exercice: obtenirExerciceFiscal(f.date instanceof Date ? f.date : new Date(f.date)) })),
+      toutesLesFacturesLehmann: toutesLesFactures
+        .filter(f => normaliserFournisseur(f.fournisseur) === 'LEHMANN')
+        .map(f => ({
+          numero: f.numero,
+          fournisseur: f.fournisseur,
+          fichierPDF: f.fichierPDF,
+          exercice: obtenirExerciceFiscal(
+            f.date instanceof Date ? f.date : new Date(f.date)
+          ),
+        })),
       forceUpdate
     });
     

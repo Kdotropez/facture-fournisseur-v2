@@ -20,7 +20,7 @@ export async function detecterFournisseurDepuisContenu(fichier: File): Promise<F
     console.log('[DETECTION] Détection du fournisseur depuis le contenu...');
     console.log('[DETECTION] Extrait (200 premiers caractères):', textePDF.substring(0, 200));
     
-    // PRIORITÉ 1: LEHMANN F (vérifier en premier pour éviter les faux positifs)
+    // PRIORITÉ 1: LEHMANN (vérifier en premier pour éviter les faux positifs)
     // Mots-clés très spécifiques à LEHMANN
     if (
       texteUpper.includes('LEHMANN F') ||
@@ -30,8 +30,8 @@ export async function detecterFournisseurDepuisContenu(fichier: File): Promise<F
       (texteUpper.includes('LEHMANN') && texteUpper.includes('FACTURE')) ||
       (texteUpper.includes('LEHMANN') && /F\s*\d+/.test(textePDF)) // "F 1", "F1", etc.
     ) {
-      console.log('[DETECTION] ✅ LEHMANN F détecté');
-      return 'LEHMANN F';
+      console.log('[DETECTION] ✅ LEHMANN détecté');
+      return 'LEHMANN';
     }
     
     // PRIORITÉ 2: RB DRINKS
@@ -88,10 +88,10 @@ export function useImportPDF() {
             const nomFichier = fichier.name.toUpperCase();
             console.log('[DETECTION] Recherche depuis le nom de fichier:', nomFichier);
             
-            // LEHMANN F : fichiers "F1.pdf", "F2.pdf", etc. (PRIORITÉ)
+            // LEHMANN : fichiers "F1.pdf", "F2.pdf", etc. (PRIORITÉ)
             if (nomFichier.match(/^F\d+\.PDF$/i) || nomFichier.includes('LEHMANN')) {
-              fournisseurDetecte = 'LEHMANN F';
-              console.log('[DETECTION] ✅ LEHMANN F détecté depuis le nom de fichier');
+              fournisseurDetecte = 'LEHMANN';
+              console.log('[DETECTION] ✅ LEHMANN détecté depuis le nom de fichier');
             } 
             // RB DRINKS
             else if (nomFichier.includes('RB') || nomFichier.startsWith('RB')) {

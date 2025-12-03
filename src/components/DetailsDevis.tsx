@@ -3,7 +3,16 @@
  */
 
 import { useState } from 'react';
-import { X, FileText, Calendar, Building2, Hash, AlertTriangle, CheckCircle } from 'lucide-react';
+import {
+  X,
+  FileText,
+  Calendar,
+  Building2,
+  Hash,
+  AlertTriangle,
+  CheckCircle,
+  Link2,
+} from 'lucide-react';
 import type { Devis } from '../types/devis';
 import type { Facture } from '../types/facture';
 import { comparerDevisAvecFactures } from '../services/devisService';
@@ -60,6 +69,22 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
   const [dateReception, setDateReception] = useState('');
   const [numeroReception, setNumeroReception] = useState('');
   const [quantiteReception, setQuantiteReception] = useState('');
+  const [liaisonFacturesOuverte, setLiaisonFacturesOuverte] = useState(false);
+  const [facturesSelectionneesIds, setFacturesSelectionneesIds] = useState<string[]>(
+    devis.facturesLieesIds || []
+  );
+
+  const facturesDuMemeFournisseur = toutesLesFactures.filter(
+    (f) => f.fournisseur === devis.fournisseur
+  );
+
+  const estFactureSelectionnee = (id: string) => facturesSelectionneesIds.includes(id);
+
+  const toggleSelectionFacture = (id: string) => {
+    setFacturesSelectionneesIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]
+    );
+  };
 
   return (
     <div className="details-facture">
@@ -71,14 +96,30 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
             <span className="details-facture__numero">{devis.numero}</span>
           </div>
         </div>
-        <button
-          type="button"
-          onClick={onClose}
-          className="details-facture__close-btn"
-          aria-label="Fermer"
-        >
-          <X size={24} />
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {onUpdate && (
+            <button
+              type="button"
+              onClick={() => {
+                setFacturesSelectionneesIds(devis.facturesLieesIds || []);
+                setLiaisonFacturesOuverte(true);
+              }}
+              className="details-facture__close-btn"
+              style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+            >
+              <Link2 size={18} />
+              Lier / délier des factures
+            </button>
+          )}
+          <button
+            type="button"
+            onClick={onClose}
+            className="details-facture__close-btn"
+            aria-label="Fermer"
+          >
+            <X size={24} />
+          </button>
+        </div>
       </div>
 
       <div className="details-facture__content">
@@ -538,6 +579,137 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
                   </button>
                 </div>
               </form>
+            </div>
+          </div>
+        )}
+
+        {/* Modal de liaison / délégation des factures au devis */}
+        {liaisonFacturesOuverte && onUpdate && (
+          <div
+            className="details-facture__modal-overlay"
+            onClick={() => setLiaisonFacturesOuverte(false)}
+          >
+            <div
+              className="details-facture__modal"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div className="details-facture__modal-header">
+                <h2>Lier / délier des factures à ce devis</h2>
+                <button
+                  type="button"
+                  onClick={() => setLiaisonFacturesOuverte(false)}
+                  className="details-facture__modal-close"
+                  aria-label="Fermer"
+                >
+                  <X size={24} />
+                </button>
+              </div>
+
+              <div className="details-facture__modal-form">
+                <div className="details-facture__modal-section">
+                  <p style={{ fontSize: '0.9rem', color: '#4b5563', marginBottom: '0.75rem' }}>
+                    Sélectionnez les factures de <strong>{devis.fournisseur}</strong> qui
+                    correspondent à ce devis (acomptes, solde…). Vous pouvez cocher ou
+                    décocher pour corriger une erreur de liaison.
+                  </p>
+                  {facturesDuMemeFournisseur.length === 0 ? (
+                    <div
+                      style={{
+                        padding: '0.75rem 1rem',
+                        borderRadius: '6px',
+                        background: '#f3f4f6',
+                        fontSize: '0.9rem',
+                        color: '#4b5563',
+                        display: 'flex',
+                        alignItems: 'center',
+                        gap: '0.5rem',
+                      }}
+                    >
+                      <FileText size={18} />
+                      <span>
+                        Aucune facture de ce fournisseur n’est encore enregistrée. Importez
+                        d’abord les factures dans l’onglet <strong>Factures</strong>.
+                      </span>
+                    </div>
+                  ) : (
+                    <div className="details-facture__table-container">
+                      <table className="details-facture__table">
+                        <thead>
+                          <tr>
+                            <th style={{ width: '3rem' }}>Lier</th>
+                            <th>Numéro</th>
+                            <th>Date</th>
+                            <th className="details-facture__th-montant">Total TTC</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {facturesDuMemeFournisseur.map((facture) => (
+                            <tr
+                              key={facture.id}
+                              onClick={() => toggleSelectionFacture(facture.id)}
+                              style={{ cursor: 'pointer' }}
+                            >
+                              <td style={{ textAlign: 'center' }}>
+                                <input
+                                  type="checkbox"
+                                  checked={estFactureSelectionnee(facture.id)}
+                                  onChange={() => toggleSelectionFacture(facture.id)}
+                                  onClick={(e) => e.stopPropagation()}
+                                />
+                              </td>
+                              <td>{facture.numero}</td>
+                              <td>
+                                {new Intl.DateTimeFormat('fr-FR', {
+                                  day: '2-digit',
+                                  month: '2-digit',
+                                  year: 'numeric',
+                                }).format(facture.date)}
+                              </td>
+                              <td className="details-facture__cell-amount">
+                                {formaterMontant(facture.totalTTC)}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+
+                <div className="details-facture__modal-footer">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setFacturesSelectionneesIds([]);
+                    }}
+                    className="details-facture__modal-btn details-facture__modal-btn--secondary"
+                    style={{ marginRight: 'auto' }}
+                  >
+                    Délier toutes les factures
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setLiaisonFacturesOuverte(false)}
+                    className="details-facture__modal-btn details-facture__modal-btn--secondary"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    type="button"
+                    className="details-facture__modal-btn details-facture__modal-btn--primary"
+                    onClick={() => {
+                      if (!onUpdate) return;
+                      onUpdate({
+                        ...devis,
+                        facturesLieesIds: facturesSelectionneesIds,
+                      });
+                      setLiaisonFacturesOuverte(false);
+                    }}
+                  >
+                    Enregistrer la liaison
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
         )}

@@ -4,6 +4,7 @@
  */
 
 import type { Facture, Fournisseur, Statistiques } from '../types/facture';
+import { normaliserNomFournisseur } from './fournisseursService';
 
 const STORAGE_KEY = 'factures-fournisseurs';
 
@@ -16,9 +17,10 @@ export function chargerFactures(): Facture[] {
     if (!donnees) return [];
     
     const factures = JSON.parse(donnees) as Facture[];
-    // Convertir les dates string en objets Date
+    // Convertir les dates string en objets Date et normaliser le nom du fournisseur
     return factures.map(f => ({
       ...f,
+      fournisseur: normaliserNomFournisseur(f.fournisseur),
       date: new Date(f.date),
       dateLivraison: f.dateLivraison ? new Date(f.dateLivraison) : undefined,
       dateImport: new Date(f.dateImport),

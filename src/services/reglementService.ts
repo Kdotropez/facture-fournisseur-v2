@@ -26,8 +26,8 @@ const REGLES_PAIEMENT_DEFAUT: Record<Fournisseur, ReglePaiementFournisseur> = {
     delaiPaiement: 30,
     notes: 'Paiement généralement en avance par acompte (pourcentage variable)',
   },
-  'LEHMANN F': {
-    fournisseur: 'LEHMANN F',
+  LEHMANN: {
+    fournisseur: 'LEHMANN',
     modePaiementDefaut: 'virement',
     paiementAvance: false,
     nombreAcomptes: 3, // Paiement en 3 fois
@@ -269,8 +269,8 @@ export function calculerEtatReglement(facture: Facture): EtatReglementFacture {
         },
       ];
     }
-    // LEHMANN F - 3 fois (1/3 à 30J, 1/3 à 60J, 1/3 à 90J)
-    else if (facture.fournisseur === 'LEHMANN F' && reglePaiement.nombreAcomptes === 3) {
+    // LEHMANN - 3 fois (1/3 à 30J, 1/3 à 60J, 1/3 à 90J)
+    else if (facture.fournisseur === 'LEHMANN' && reglePaiement.nombreAcomptes === 3) {
       const montantParTranche = totalTTC / 3;
       
       acomptesPrevu = [
@@ -663,8 +663,8 @@ export function creerAcomptesPrevu(facture: Facture): Reglement[] {
       dateModification: new Date(),
     });
   }
-  // Cas 2: LEHMANN F - Paiement en 3 fois (1/3 à 30J, 1/3 à 60J, 1/3 à 90J)
-  else if (facture.fournisseur === 'LEHMANN F' && reglePaiement.nombreAcomptes === 3) {
+  // Cas 2: LEHMANN - Paiement en 3 fois (1/3 à 30J, 1/3 à 60J, 1/3 à 90J)
+  else if (facture.fournisseur === 'LEHMANN' && reglePaiement.nombreAcomptes === 3) {
     const montantParTranche = facture.totalTTC / 3;
     
     // 1/3 à 30 jours

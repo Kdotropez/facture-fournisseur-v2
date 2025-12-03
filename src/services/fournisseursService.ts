@@ -54,3 +54,25 @@ export function obtenirTousLesFournisseurs(): Fournisseur[] {
   return Array.from(new Set(tous)) as Fournisseur[];
 }
 
+/**
+ * Normalise un nom de fournisseur pour regrouper les variantes
+ * Exemple : "LEHMANN F" -> "LEHMANN"
+ */
+const ALIAS_FOURNISSEURS: Record<string, Fournisseur> = {
+  'LEHMANN F': 'LEHMANN',
+  LEHMANN: 'LEHMANN',
+};
+
+export function normaliserNomFournisseur(nom: Fournisseur): Fournisseur {
+  // Sécuriser au cas où des anciennes données auraient un fournisseur manquant ou non string
+  if (!nom || typeof nom !== 'string') {
+    return '' as Fournisseur;
+  }
+
+  const cle = nom.trim().toUpperCase();
+  if (ALIAS_FOURNISSEURS[cle]) {
+    return ALIAS_FOURNISSEURS[cle];
+  }
+  return nom;
+}
+

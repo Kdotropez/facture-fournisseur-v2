@@ -3,13 +3,17 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, FileText, Building2, Euro, List, Layers, Eye } from 'lucide-react';
+import { TrendingUp, FileText, Building2, Euro, List, Layers, Eye, Edit3, X } from 'lucide-react';
 import type { Facture, Fournisseur, Statistiques } from '../types/facture';
+import { normaliserNomFournisseur } from '../services/fournisseursService';
+import { renommerFournisseurGlobal } from '../services/renommageFournisseurService';
 import './Statistiques.css';
 
 interface StatistiquesProps {
   factures: Facture[];
   onVoirFacture?: (facture: Facture) => void;
+  /** Optionnel : appelé après un renommage de fournisseur pour recharger les données */
+  onFournisseursMisAJour?: () => void;
 }
 
 interface FactureFiltrée {
@@ -52,11 +56,15 @@ const fournisseursInitial: Record<
   { nombre: number; totalHT: number; totalTVA: number; totalTTC: number }
 > = {
   'RB DRINKS': { nombre: 0, totalHT: 0, totalTVA: 0, totalTTC: 0 },
-  'LEHMANN F': { nombre: 0, totalHT: 0, totalTVA: 0, totalTTC: 0 },
+  LEHMANN: { nombre: 0, totalHT: 0, totalTVA: 0, totalTTC: 0 },
   'ITALESSE': { nombre: 0, totalHT: 0, totalTVA: 0, totalTTC: 0 },
 };
 
-export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesProps) {
+export function StatistiquesComponent({
+  factures,
+  onVoirFacture,
+  onFournisseursMisAJour,
+}: StatistiquesProps) {
   const formaterMontant = (montant: number) =>
     new Intl.NumberFormat('fr-FR', {
       style: 'currency',
@@ -91,6 +99,10 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
 
   const [fournisseurSelectionne, setFournisseurSelectionne] = useState<string | null>(null);
   const [produitSelectionne, setProduitSelectionne] = useState<string | null>(null);
+
+  // Édition du nom de fournisseur
+  const [fournisseurEnEdition, setFournisseurEnEdition] = useState<string | null>(null);
+  const [nouveauNomFournisseur, setNouveauNomFournisseur] = useState('');
 
   const [traductions, setTraductions] = useState<Record<string, string>>(() => {
     if (typeof window === 'undefined') return {};
@@ -156,12 +168,24 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
     };
 
     facturesFiltrees.forEach(({ facture, totalHTLignes, totalTVALignes, totalTTCLignes }) => {
+      const fournisseurCanonique = normaliserNomFournisseur(facture.fournisseur);
+
       base.nombreFactures += 1;
       base.totalHT += totalHTLignes;
       base.totalTVA += totalTVALignes;
       base.totalTTC += totalTTCLignes;
 
-      const statsFournisseur = base.parFournisseur[facture.fournisseur];
+      // S'assurer que tous les fournisseurs présents dans les factures ont bien une entrée
+      if (!base.parFournisseur[fournisseurCanonique]) {
+        base.parFournisseur[fournisseurCanonique] = {
+          nombre: 0,
+          totalHT: 0,
+          totalTVA: 0,
+          totalTTC: 0,
+        };
+      }
+
+      const statsFournisseur = base.parFournisseur[fournisseurCanonique];
       statsFournisseur.nombre += 1;
       statsFournisseur.totalHT += totalHTLignes;
       statsFournisseur.totalTVA += totalTVALignes;
@@ -175,10 +199,12 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
     const result: Record<string, FournisseurProduits> = {};
 
     facturesFiltrees.forEach(({ facture, lignes }) => {
-      if (!result[facture.fournisseur]) {
-        result[facture.fournisseur] = {};
+      const fournisseurCanonique = normaliserNomFournisseur(facture.fournisseur);
+
+      if (!result[fournisseurCanonique]) {
+        result[fournisseurCanonique] = {};
       }
-      const produits = result[facture.fournisseur];
+      const produits = result[fournisseurCanonique];
 
       lignes.forEach((ligne) => {
         if (!ligne.refFournisseur) return;
@@ -489,6 +515,7 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
                   <th onClick={() => changerTri(triFournisseur, 'ttc', setTriFournisseur)}>
                     TTC {renderTri(triFournisseur, 'ttc')}
                   </th>
+                  <th>Actions</th>
                 </tr>
               </thead>
               <tbody>
@@ -508,11 +535,25 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
                     <td>{formaterMontant(stats.totalHT)}</td>
                     <td>{formaterMontant(stats.totalTVA)}</td>
                     <td>{formaterMontant(stats.totalTTC)}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="statistiques__action-btn"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          setFournisseurEnEdition(fournisseur);
+                          setNouveauNomFournisseur(fournisseur);
+                        }}
+                      >
+                        <Edit3 size={14} />
+                        Renommer
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {fournisseursTries.length === 0 && (
                   <tr>
-                    <td colSpan={5} className="statistiques__empty">
+                    <td colSpan={6} className="statistiques__empty">
                       Aucune facture ne correspond aux critères.
                     </td>
                   </tr>
@@ -714,6 +755,98 @@ export function StatistiquesComponent({ factures, onVoirFacture }: StatistiquesP
           </div>
         )}
       </div>
+
+      {/* Modal de renommage de fournisseur */}
+      {fournisseurEnEdition && (
+        <div
+          className="statistiques__modal-overlay"
+          onClick={() => {
+            setFournisseurEnEdition(null);
+            setNouveauNomFournisseur('');
+          }}
+        >
+          <div
+            className="statistiques__modal"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="statistiques__modal-header">
+              <h3>Renommer le fournisseur</h3>
+              <button
+                type="button"
+                className="statistiques__modal-close"
+                onClick={() => {
+                  setFournisseurEnEdition(null);
+                  setNouveauNomFournisseur('');
+                }}
+                aria-label="Fermer"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <form
+              className="statistiques__modal-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                if (!fournisseurEnEdition) return;
+                const nouveauNom = nouveauNomFournisseur.trim();
+                if (!nouveauNom || nouveauNom === fournisseurEnEdition) {
+                  setFournisseurEnEdition(null);
+                  return;
+                }
+
+                renommerFournisseurGlobal(
+                  fournisseurEnEdition as Fournisseur,
+                  nouveauNom as Fournisseur
+                );
+
+                // Demander au parent de recharger les données (factures / devis)
+                onFournisseursMisAJour?.();
+
+                setFournisseurEnEdition(null);
+                setNouveauNomFournisseur('');
+              }}
+            >
+              <div className="statistiques__modal-body">
+                <label>
+                  Ancien nom
+                  <input type="text" value={fournisseurEnEdition} readOnly />
+                </label>
+                <label>
+                  Nouveau nom du fournisseur
+                  <input
+                    type="text"
+                    value={nouveauNomFournisseur}
+                    onChange={(e) => setNouveauNomFournisseur(e.target.value)}
+                    autoFocus
+                  />
+                </label>
+                <p className="statistiques__modal-help">
+                  Ce renommage s’appliquera aux factures, devis et références produits existants
+                  pour ce fournisseur.
+                </p>
+              </div>
+              <div className="statistiques__modal-footer">
+                <button
+                  type="button"
+                  className="statistiques__modal-btn statistiques__modal-btn--secondary"
+                  onClick={() => {
+                    setFournisseurEnEdition(null);
+                    setNouveauNomFournisseur('');
+                  }}
+                >
+                  Annuler
+                </button>
+                <button
+                  type="submit"
+                  className="statistiques__modal-btn statistiques__modal-btn--primary"
+                >
+                  Enregistrer
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

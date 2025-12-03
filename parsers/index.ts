@@ -18,9 +18,9 @@ import { appliquerReglesApprises } from '../src/services/parsingRulesService';
  */
 export const parseurs: Record<Fournisseur, Parser> = {
   'RB DRINKS': parserRBDrinks,
-  'LEHMANN F': parserLehmann,
-  'ITALESSE': parserItalesse,
-  'STEM': parserStem,
+  LEHMANN: parserLehmann,
+  ITALESSE: parserItalesse,
+  STEM: parserStem,
 };
 
 /**
@@ -186,9 +186,9 @@ export function detecterFournisseur(chemin: string): Fournisseur | null {
     cheminNormalise.includes('LEHMANN F') ||
     cheminNormalise.includes('LEHMANN FRERES') ||
     cheminNormalise.includes('LEHMANN FRÈRES') ||
-    (cheminNormalise.includes('LEHMANN') && cheminNormalise.includes('F'))
+    cheminNormalise.includes('LEHMANN')
   ) {
-    return 'LEHMANN F';
+    return 'LEHMANN';
   }
 
   // Détection automatique des nouveaux fournisseurs depuis le nom du dossier

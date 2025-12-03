@@ -25,6 +25,7 @@ import './App.css';
 import { lireFichierEnDataURL } from './utils/fileUtils';
 import { rechercherFacturesPerdues, afficherRapportDiagnostic, creerBackupFactures } from './utils/diagnosticLocalStorage';
 import { chargerFactures } from './services/factureService';
+import { chargerDevis } from './services/devisService';
 
 type Vue = 'factures' | 'devis' | 'statistiques' | 'import' | 'editeur' | 'reglements';
 
@@ -61,6 +62,7 @@ function App() {
     ajouterDevis,
     supprimerDevis,
     mettreAJourDevis,
+    remplacerDevis,
   } = useDevis();
 
   // État pour gérer les fournisseurs sélectionnés dans la vue fournisseur
@@ -914,7 +916,17 @@ function App() {
 
         {vueActive === 'statistiques' && (
           <div className="app__statistiques">
-            <StatistiquesComponent factures={toutesLesFactures} onVoirFacture={handleVoirFacture} />
+            <StatistiquesComponent
+              factures={toutesLesFactures}
+              onVoirFacture={handleVoirFacture}
+              onFournisseursMisAJour={() => {
+                // Recharger les factures et devis après renommage d'un fournisseur
+                const facturesRech = chargerFactures();
+                remplacerFactures(facturesRech);
+                const devisRech = chargerDevis();
+                remplacerDevis(devisRech);
+              }}
+            />
           </div>
         )}
 

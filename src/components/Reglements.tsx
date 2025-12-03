@@ -151,7 +151,7 @@ export function Reglements({ factures }: ReglementsProps) {
       setFacturePourAcomptes(facture);
       setAfficherModalAcomptes(true);
     } else {
-      // Sinon, créer directement les acomptes (LEHMANN F)
+      // Sinon, créer directement les acomptes (LEHMANN)
       const nouveauxReglements = creerAcomptesPrevu(facture);
       nouveauxReglements.forEach(reglement => ajouterReglement(reglement));
       setReglements(chargerReglements());
@@ -800,7 +800,7 @@ export function Reglements({ factures }: ReglementsProps) {
               if (regle) {
                 const dateFacture = new Date(factureAMarquer.date);
                 
-                if (factureAMarquer.fournisseur === 'LEHMANN F' && regle.nombreAcomptes === 3) {
+                if (factureAMarquer.fournisseur === 'LEHMANN' && regle.nombreAcomptes === 3) {
                   const montantParTranche = factureAMarquer.totalTTC / 3;
                   const datesEcheance = [
                     new Date(dateFacture.getTime() + 30 * 24 * 60 * 60 * 1000),
@@ -1166,18 +1166,38 @@ function ModalMarquerRegle({ facture, reglementsExistants, onSauvegarder, onFerm
   
   // Calculer les acomptes prévus
   const regle = obtenirReglePaiement(facture.fournisseur);
-  const acomptesPrevu = regle ? (() => {
-    const dateFacture = new Date(facture.date);
-    if (facture.fournisseur === 'LEHMANN F' && regle.nombreAcomptes === 3) {
-      const montantParTranche = facture.totalTTC / 3;
-      return [
-        { montant: montantParTranche, dateEcheance: new Date(dateFacture.getTime() + 30 * 24 * 60 * 60 * 1000), type: 'solde' as const },
-        { montant: montantParTranche, dateEcheance: new Date(dateFacture.getTime() + 60 * 24 * 60 * 60 * 1000), type: 'solde' as const },
-        { montant: montantParTranche, dateEcheance: new Date(dateFacture.getTime() + 90 * 24 * 60 * 60 * 1000), type: 'solde' as const },
-      ];
-    }
-    return [];
-  })() : [];
+  const acomptesPrevu = regle
+    ? (() => {
+        const dateFacture = new Date(facture.date);
+        if (facture.fournisseur === 'LEHMANN' && regle.nombreAcomptes === 3) {
+          const montantParTranche = facture.totalTTC / 3;
+          return [
+            {
+              montant: montantParTranche,
+              dateEcheance: new Date(
+                dateFacture.getTime() + 30 * 24 * 60 * 60 * 1000
+              ),
+              type: 'solde' as const,
+            },
+            {
+              montant: montantParTranche,
+              dateEcheance: new Date(
+                dateFacture.getTime() + 60 * 24 * 60 * 60 * 1000
+              ),
+              type: 'solde' as const,
+            },
+            {
+              montant: montantParTranche,
+              dateEcheance: new Date(
+                dateFacture.getTime() + 90 * 24 * 60 * 60 * 1000
+              ),
+              type: 'solde' as const,
+            },
+          ];
+        }
+        return [];
+      })()
+    : [];
 
   const [mode, setMode] = useState<'existant' | 'prevu'>(
     reglementsEnAttente.length > 0 ? 'existant' : 'prevu'
