@@ -3,7 +3,7 @@
  */
 
 import { useRef, useState, useEffect } from 'react';
-import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard, FileSignature, X } from 'lucide-react';
+import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard, FileSignature, X, Cloud } from 'lucide-react';
 import { useFactures } from './hooks/useFactures';
 import { useDevis } from './hooks/useDevis';
 import { useImportPDF, detecterFournisseurDepuisContenu } from './hooks/useImportPDF';
@@ -25,6 +25,8 @@ import './App.css';
 import { lireFichierEnDataURL } from './utils/fileUtils';
 import { rechercherFacturesPerdues, afficherRapportDiagnostic, creerBackupFactures } from './utils/diagnosticLocalStorage';
 import { chargerFactures } from './services/factureService';
+import { creerSauvegardeGlobale, restaurerSauvegardeGlobale, SauvegardeGlobale } from './services/sauvegardeGlobaleService';
+import { exporterSauvegardeVersGoogleDrive } from './services/googleDriveService';
 import { chargerDevis } from './services/devisService';
 
 type Vue = 'factures' | 'devis' | 'statistiques' | 'import' | 'editeur' | 'reglements';
@@ -404,10 +406,11 @@ function App() {
     }
   };
 
-  const handleExporterFactures = () => {
+  const handleExporterSauvegardeGlobale = async () => {
     try {
-      const donnees = JSON.stringify(toutesLesFactures, null, 2);
-      const nomFichier = `factures-${new Date().toISOString().slice(0, 10)}.json`;
+      const sauvegarde = creerSauvegardeGlobale();
+      const donnees = JSON.stringify(sauvegarde, null, 2);
+      const nomFichier = `backup-complet-${new Date().toISOString().slice(0, 10)}.json`;
       const blob = new Blob([donnees], { type: 'application/json' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -417,9 +420,17 @@ function App() {
       a.click();
       document.body.removeChild(a);
       URL.revokeObjectURL(url);
+
+      // Export automatique vers Google Drive si configuré
+      try {
+        await exporterSauvegardeVersGoogleDrive(sauvegarde, 'factures fournisseur');
+      } catch (driveError) {
+        console.warn('Export Google Drive échoué ou non configuré:', driveError);
+        // Ne pas bloquer l’utilisateur : le téléchargement local a déjà été fait
+      }
     } catch (error) {
-      console.error('Erreur lors de l’export des factures:', error);
-      setErreur('Impossible d’exporter les factures. Réessayez ou vérifiez la console.');
+      console.error('Erreur lors de l’export global:', error);
+      setErreur('Impossible d’exporter les données. Réessayez ou vérifiez la console.');
     }
   };
 
@@ -497,23 +508,38 @@ function App() {
 
     try {
       const contenu = await fichier.text();
-      const facturesJSON = JSON.parse(contenu);
-      if (!Array.isArray(facturesJSON)) {
-        throw new Error('Le fichier ne contient pas une liste de factures.');
+      const json = JSON.parse(contenu);
+
+      // Compatibilité ancienne version : fichier = tableau de factures
+      if (Array.isArray(json)) {
+        const facturesParsees = json.map((facture: Facture) => ({
+          ...facture,
+          date: new Date(facture.date),
+          dateImport: new Date(facture.dateImport),
+        }));
+
+        remplacerFactures(facturesParsees);
+        setFactureSelectionnee(null);
+        setErreur(null);
+        return;
       }
 
-      const facturesParsees = facturesJSON.map((facture: Facture) => ({
-        ...facture,
-        date: new Date(facture.date),
-        dateImport: new Date(facture.dateImport),
-      }));
+      // Nouvelle version : sauvegarde globale
+      const sauvegarde = json as SauvegardeGlobale;
+      restaurerSauvegardeGlobale(sauvegarde);
 
-      remplacerFactures(facturesParsees);
+      // Recharger les factures et devis depuis le localStorage restauré
+      const facturesRech = chargerFactures();
+      remplacerFactures(facturesRech);
+      const devisRech = chargerDevis();
+      remplacerDevis(devisRech);
+
       setFactureSelectionnee(null);
+      setDevisSelectionne(null);
       setErreur(null);
     } catch (error) {
-      console.error('Erreur lors de la restauration des factures:', error);
-      setErreur('Impossible de restaurer les factures. Vérifiez le fichier JSON.');
+      console.error('Erreur lors de la restauration des données:', error);
+      setErreur('Impossible de restaurer les données. Vérifiez le fichier JSON.');
     } finally {
       event.target.value = '';
     }
@@ -601,11 +627,10 @@ function App() {
             <button
               type="button"
               className="app__export-btn"
-              onClick={handleExporterFactures}
-              disabled={toutesLesFactures.length === 0}
+              onClick={handleExporterSauvegardeGlobale}
             >
               <Download size={18} />
-              Exporter les données
+              Export global + Google Drive
             </button>
             <button
               type="button"
