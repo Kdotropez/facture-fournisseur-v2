@@ -5,6 +5,7 @@
 
 import type { Facture, Fournisseur, Statistiques } from '../types/facture';
 import { normaliserNomFournisseur } from './fournisseursService';
+import { nettoyerTousLesBackups } from '../utils/diagnosticLocalStorage';
 
 const STORAGE_KEY = 'factures-fournisseurs';
 
@@ -88,11 +89,48 @@ function verifierEspaceDisponible(tailleEstimee: number): boolean {
 }
 
 /**
+ * Réduit la taille des factures avant stockage pour éviter de saturer le localStorage
+ * - Supprime les PDF encodés trop volumineux (`pdfOriginal`)
+ * - Coupe le texte brut complet (`donneesBrutes.texteComplet`)
+ * - Tronque éventuellement les extraits trop longs
+ */
+function optimiserFacturesPourStockage(factures: Facture[]): Facture[] {
+  return factures.map((f) => {
+    const copie: Facture = { ...f };
+
+    // 1) PDF encodé en base64 (très volumineux) : on le supprime si trop gros
+    if (copie.pdfOriginal && copie.pdfOriginal.length > 100_000) {
+      // On garde le nom du fichier PDF mais pas le contenu encodé
+      copie.pdfOriginal = undefined;
+    }
+
+    // 2) Données brutes de parsing : supprimer le texte complet, garder au plus un extrait
+    if (copie.donneesBrutes) {
+      const db: any = { ...copie.donneesBrutes };
+
+      if (typeof db.texteComplet === 'string') {
+        delete db.texteComplet;
+      }
+      if (typeof db.texteExtrait === 'string' && db.texteExtrait.length > 2_000) {
+        db.texteExtrait = db.texteExtrait.slice(0, 2_000);
+      }
+
+      copie.donneesBrutes = db;
+    }
+
+    return copie;
+  });
+}
+
+/**
  * Sauvegarde toutes les factures dans le stockage local
  * Crée automatiquement un backup avant de sauvegarder (si espace disponible)
  */
 export function sauvegarderFactures(factures: Facture[]): void {
   try {
+    // Toujours optimiser les factures avant de les sérialiser
+    const facturesOptimisees = optimiserFacturesPourStockage(factures);
+
     // Nettoyer les anciens backups d'abord
     nettoyerBackups();
     
@@ -121,20 +159,23 @@ export function sauvegarderFactures(factures: Facture[]): void {
       }
     }
     
-    // Sauvegarder les nouvelles données
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(factures));
+    // Sauvegarder les nouvelles données optimisées
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(facturesOptimisees));
   } catch (error) {
     // Si l'erreur est liée au quota, nettoyer et réessayer
     if (error instanceof Error && error.name === 'QuotaExceededError') {
       console.warn('⚠️ Quota localStorage dépassé, nettoyage agressif...');
       
-      // Nettoyer tous les backups sauf le plus récent
+      // Nettoyer tous les backups (clé principale et autres backups utilitaires)
       nettoyerBackups();
-      
-      // Supprimer aussi les autres données temporaires si nécessaire
+      nettoyerTousLesBackups();
+
+      // Réduire au maximum la taille des factures avant de réessayer
+      const facturesOptimisees = optimiserFacturesPourStockage(factures);
+
+      // Réessayer une dernière fois la sauvegarde après nettoyage
       try {
-        // Réessayer la sauvegarde
-        localStorage.setItem(STORAGE_KEY, JSON.stringify(factures));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(facturesOptimisees));
         console.log('✅ Sauvegarde réussie après nettoyage');
       } catch (retryError) {
         console.error('❌ Impossible de sauvegarder même après nettoyage:', retryError);

@@ -12,10 +12,13 @@ import {
   AlertTriangle,
   CheckCircle,
   Link2,
+  Edit,
 } from 'lucide-react';
 import type { Devis } from '../types/devis';
 import type { Facture } from '../types/facture';
 import { comparerDevisAvecFactures } from '../services/devisService';
+import { calculerEtatReglement } from '../services/reglementService';
+import { EditeurDevis } from './EditeurDevis';
 import './DetailsFacture.css';
 
 interface DetailsDevisProps {
@@ -26,6 +29,8 @@ interface DetailsDevisProps {
 }
 
 export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: DetailsDevisProps) {
+  const [editionMode, setEditionMode] = useState(false);
+
   if (!devis) {
     return (
       <div className="details-facture details-facture--empty">
@@ -65,6 +70,15 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
   const totalLivraisonsTTC = comparaison.totalLivraisonsTTC;
   const resteALivrerTTC = comparaison.resteALivrerTTC;
 
+  // Total déjà payé sur les factures liées (en TTC), basé sur les règlements
+  const totalPayeTTC = comparaison.facturesLiees.reduce((sum, facture) => {
+    const etat = calculerEtatReglement(facture);
+    return sum + etat.montantRegle;
+  }, 0);
+
+  // Reste à payer TTC sur le devis (indépendant des livraisons)
+  const resteAPayerTTC = Math.max(0, comparaison.totalDevisTTC - totalPayeTTC);
+
   const [lignePourReception, setLignePourReception] = useState<number | null>(null);
   const [dateReception, setDateReception] = useState('');
   const [numeroReception, setNumeroReception] = useState('');
@@ -97,6 +111,17 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          {onUpdate && (
+            <button
+              type="button"
+              onClick={() => setEditionMode(true)}
+              className="details-facture__edit-btn"
+              aria-label="Éditer le devis"
+              title="Éditer le devis"
+            >
+              <Edit size={18} />
+            </button>
+          )}
           {onUpdate && (
             <button
               type="button"
@@ -356,6 +381,18 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
               <span className="details-facture__total-label">Total livraisons TTC</span>
               <span className="details-facture__total-value">
                 {formaterMontant(totalLivraisonsTTC)}
+              </span>
+            </div>
+            <div className="details-facture__total-item">
+              <span className="details-facture__total-label">Total payé TTC</span>
+              <span className="details-facture__total-value">
+                {formaterMontant(totalPayeTTC)}
+              </span>
+            </div>
+            <div className="details-facture__total-item">
+              <span className="details-facture__total-label">Reste à payer TTC</span>
+              <span className="details-facture__total-value">
+                {formaterMontant(resteAPayerTTC)}
               </span>
             </div>
             <div className="details-facture__total-item">
@@ -712,6 +749,18 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
               </div>
             </div>
           </div>
+        )}
+
+        {/* Modal d'édition du devis complet (fournisseur, lignes, totaux) */}
+        {editionMode && devis && onUpdate && (
+          <EditeurDevis
+            devisInitial={devis}
+            onSauvegarder={(devisModifie) => {
+              onUpdate(devisModifie);
+              setEditionMode(false);
+            }}
+            onFermer={() => setEditionMode(false)}
+          />
         )}
       </div>
     </div>

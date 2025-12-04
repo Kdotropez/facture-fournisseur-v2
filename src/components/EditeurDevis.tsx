@@ -1,8 +1,8 @@
 /**
- * Modal de création d'un devis à la main
+ * Modal de création / édition d'un devis à la main
  */
 
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
 import type { Devis } from '../types/devis';
 import type { LigneProduit, Fournisseur } from '../types/facture';
@@ -10,11 +10,12 @@ import { obtenirFournisseurs } from '@parsers/index';
 import './DetailsFacture.css';
 
 interface EditeurDevisProps {
+  devisInitial?: Devis;
   onSauvegarder: (devis: Devis) => void;
   onFermer: () => void;
 }
 
-export function EditeurDevis({ onSauvegarder, onFermer }: EditeurDevisProps) {
+export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurDevisProps) {
   const tousLesFournisseurs = obtenirFournisseurs();
 
   const creerDevisInitial = (): Devis => ({
@@ -31,7 +32,14 @@ export function EditeurDevis({ onSauvegarder, onFermer }: EditeurDevisProps) {
     facturesLieesIds: [],
   });
 
-  const [devis, setDevis] = useState<Devis>(creerDevisInitial);
+  const [devis, setDevis] = useState<Devis>(() => devisInitial ?? creerDevisInitial());
+
+  // Si on reçoit un devis existant à éditer, on le charge dans l'état local
+  useEffect(() => {
+    if (devisInitial) {
+      setDevis(devisInitial);
+    }
+  }, [devisInitial]);
 
   const handleChange = (field: keyof Devis, value: unknown) => {
     setDevis(prev => ({ ...prev, [field]: value }));
@@ -96,7 +104,8 @@ export function EditeurDevis({ onSauvegarder, onFermer }: EditeurDevisProps) {
       totalHT,
       totalTVA,
       totalTTC,
-      dateImport: new Date(),
+      // Si le devis a déjà une date d'import (cas édition), on la conserve
+      dateImport: devis.dateImport ?? new Date(),
     };
 
     onSauvegarder(devisFinal);
@@ -106,7 +115,7 @@ export function EditeurDevis({ onSauvegarder, onFermer }: EditeurDevisProps) {
     <div className="details-facture__modal-overlay" onClick={onFermer}>
       <div className="details-facture__modal" onClick={(e) => e.stopPropagation()}>
         <div className="details-facture__modal-header">
-          <h2>Nouveau devis</h2>
+          <h2>{devisInitial ? 'Modifier le devis' : 'Nouveau devis'}</h2>
           <button
             type="button"
             onClick={onFermer}
@@ -367,7 +376,7 @@ export function EditeurDevis({ onSauvegarder, onFermer }: EditeurDevisProps) {
               type="submit"
               className="details-facture__modal-btn details-facture__modal-btn--primary"
             >
-              Enregistrer le devis
+              {devisInitial ? 'Mettre à jour le devis' : 'Enregistrer le devis'}
             </button>
           </div>
         </form>

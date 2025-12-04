@@ -135,8 +135,26 @@ export function sauvegarderReglesParsing(regles: Map<Fournisseur, ParsingRule>):
     const reglesArray = Array.from(regles.values());
     localStorage.setItem(STORAGE_KEY, JSON.stringify(reglesArray));
   } catch (error) {
+    // Ne pas bloquer l'application en cas de dépassement de quota.
+    // On désactive simplement la sauvegarde des règles si le stockage est plein.
     console.error('Erreur lors de la sauvegarde des règles de parsing:', error);
-    throw error;
+    if (
+      error instanceof DOMException &&
+      (error.name === 'QuotaExceededError' || error.code === 22)
+    ) {
+      console.warn(
+        '[PARSING RULES] Quota localStorage atteint pour "parsing-rules". ' +
+          "L'apprentissage automatique est désactivé, mais l'import de la facture continue."
+      );
+      // Option possible (commentée) : purger complètement les règles apprises
+      // localStorage.removeItem(STORAGE_KEY);
+    } else {
+      // Autre type d'erreur : on loggue mais on n'empêche pas le reste du flux
+      console.warn(
+        '[PARSING RULES] Erreur inattendue lors de la sauvegarde des règles, ' +
+          "l'import continue sans apprentissage."
+      );
+    }
   }
 }
 
