@@ -119,3 +119,6 @@ Lors du parsing de la facture F2 de LEHMANN F :
 Les règles apprises sont stockées dans le `localStorage` du navigateur. Vous pouvez les consulter dans la console du navigateur (F12) en cherchant les messages `[PARSING RULES]`.
 
 
+
+
+

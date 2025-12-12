@@ -41,6 +41,20 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
   }
 
   const comparaison = comparerDevisAvecFactures(devis, toutesLesFactures);
+  const totalDevisHT = comparaison.devis.totalHT || 0;
+  const totalDevisTVA = comparaison.devis.totalTVA || 0;
+  const totalFacturesHT = comparaison.facturesLiees.reduce(
+    (sum, f) => sum + (typeof f.totalHT === 'number' ? f.totalHT : 0),
+    0
+  );
+  const totalFacturesTVA = comparaison.facturesLiees.reduce(
+    (sum, f) => sum + (typeof f.totalTVA === 'number' ? f.totalTVA : 0),
+    0
+  );
+  const ecartGlobalHT = totalFacturesHT - totalDevisHT;
+  const ecartGlobalTVA = totalFacturesTVA - totalDevisTVA;
+  const tvaDejaRecuperee = Math.min(totalFacturesTVA, totalDevisTVA);
+  const tvaRestanteARecuperer = Math.max(0, totalDevisTVA - totalFacturesTVA);
 
   const formaterDate = (date: Date) =>
     new Intl.DateTimeFormat('fr-FR', {
@@ -163,10 +177,26 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
                   <strong>Écart entre devis et factures.</strong>
                   <ul>
                     <li>
+                      Devis HT {formaterMontant(totalDevisHT)} vs facturé HT{' '}
+                      {formaterMontant(totalFacturesHT)} (écart{' '}
+                      {formaterMontant(ecartGlobalHT)}
+                      ).
+                    </li>
+                    <li>
                       Devis TTC {formaterMontant(comparaison.totalDevisTTC)} vs facturé TTC{' '}
                       {formaterMontant(comparaison.totalFacturesTTC)} (écart{' '}
                       {formaterMontant(comparaison.ecartGlobalTTC)}
                       ).
+                    </li>
+                    <li>
+                      TVA devis {formaterMontant(totalDevisTVA)} vs TVA facturée{' '}
+                      {formaterMontant(totalFacturesTVA)} (écart{' '}
+                      {formaterMontant(ecartGlobalTVA)}
+                      ).
+                    </li>
+                    <li>
+                      TVA déjà récupérée {formaterMontant(tvaDejaRecuperee)} – TVA restante à
+                      récupérer {formaterMontant(tvaRestanteARecuperer)}.
                     </li>
                   </ul>
                 </div>

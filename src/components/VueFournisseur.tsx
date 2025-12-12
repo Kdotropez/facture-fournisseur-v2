@@ -4,7 +4,7 @@
  */
 
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { Building2, FileText, Euro, Calendar, TrendingUp, X, Filter, CheckSquare, Square, Plus, CreditCard, ArrowUp, ArrowDown, ArrowUpDown } from 'lucide-react';
+import { Building2, FileText, Euro, Calendar, TrendingUp, X, Filter, CheckSquare, Square, Plus, CreditCard, ArrowUp, ArrowDown, ArrowUpDown, Trash2 } from 'lucide-react';
 import type { Facture, Fournisseur } from '../types/facture';
 import { 
   calculerEtatReglement, 
@@ -51,6 +51,7 @@ interface VueFournisseurProps {
   onFournisseursChange: (fournisseurs: Fournisseur[]) => void;
   onFactureSelect?: (facture: Facture) => void;
   onFactureUpdate?: () => void; // Callback pour forcer la mise à jour des factures
+  onSupprimerFacture?: (factureId: string) => void;
 }
 
 export function VueFournisseur({ 
@@ -58,7 +59,8 @@ export function VueFournisseur({
   toutesLesFactures, 
   onFournisseursChange,
   onFactureSelect,
-  onFactureUpdate
+  onFactureUpdate,
+  onSupprimerFacture,
 }: VueFournisseurProps) {
   const [filtreOuvert, setFiltreOuvert] = useState(false);
   const [filtreExerciceOuvert, setFiltreExerciceOuvert] = useState(false);
@@ -742,7 +744,7 @@ export function VueFournisseur({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleReglerAcompte(facture);
+                                handleReglerAcomptes(facture);
                               }}
                               className="vue-fournisseur__action-btn vue-fournisseur__action-btn--success"
                               title="Régler le prochain acompte"
@@ -761,6 +763,25 @@ export function VueFournisseur({
                           >
                             <CreditCard size={14} />
                           </button>
+                          {onSupprimerFacture && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                const confirmer = window.confirm(
+                                  'Êtes-vous sûr de vouloir supprimer cette facture ?\n\n' +
+                                  'Cette action est définitive et tous les règlements associés à cette facture seront également supprimés.'
+                                );
+                                if (confirmer) {
+                                  onSupprimerFacture(facture.id);
+                                }
+                              }}
+                              className="vue-fournisseur__action-btn vue-fournisseur__action-btn--danger"
+                              title="Supprimer la facture (et ses règlements)"
+                            >
+                              <Trash2 size={14} />
+                            </button>
+                          )}
                         </div>
                       </td>
                     </tr>

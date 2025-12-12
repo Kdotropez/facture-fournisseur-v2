@@ -57,6 +57,8 @@ export interface DonneesBrutesFacture {
 export interface Facture {
   /** Identifiant unique de la facture */
   id: string;
+  /** Statut de la facture (active par défaut, ou annulée pour une annulation douce) */
+  statut?: 'active' | 'annulee';
   /** Fournisseur */
   fournisseur: Fournisseur;
   /** Numéro de facture */

@@ -14,6 +14,8 @@ import { detecterFournisseurDepuisContenu } from '../hooks/useImportPDF';
 import { obtenirTousLesFournisseurs, ajouterFournisseurPersonnalise } from '../services/fournisseursService';
 import './EditeurParsing.css';
 
+const TAUX_TVA_PAR_DEFAUT = 0.20;
+
 interface EditeurParsingProps {
   onImporter: (facture: Facture) => Promise<void>;
   fichierInitial?: File;
@@ -40,6 +42,29 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
   const dateFactureValide = dateFacture ? !Number.isNaN(dateFacture.getTime()) : false;
   const valeurDateInput = dateFactureValide ? dateFacture!.toISOString().split('T')[0] : '';
   const dateAffichee = dateFactureValide ? dateFacture!.toLocaleDateString('fr-FR') : 'Date invalide';
+
+  // Données complémentaires issues du parsing brut (pour gérer les remises globales, net HT, etc.)
+  const totalHTBrut =
+    (factureEditee?.donneesBrutes && typeof factureEditee.donneesBrutes.totalHTBrut === 'number'
+      ? factureEditee.donneesBrutes.totalHTBrut
+      : factureEditee?.totalHT) ?? 0;
+  const remiseGlobale =
+    (factureEditee?.donneesBrutes && typeof factureEditee.donneesBrutes.remise === 'number'
+      ? factureEditee.donneesBrutes.remise
+      : 0);
+  const netHTCalcule = totalHTBrut - remiseGlobale;
+
+  // Saisie utilisateur brute pour la remise globale (pour éviter les blocages du type="number")
+  const [remiseGlobaleBrute, setRemiseGlobaleBrute] = useState<string>('');
+
+  useEffect(() => {
+    // Mettre à jour le champ texte quand la remise globale change (par parsing ou import)
+    if (remiseGlobale && !Number.isNaN(remiseGlobale)) {
+      setRemiseGlobaleBrute(remiseGlobale.toFixed(2));
+    } else {
+      setRemiseGlobaleBrute('');
+    }
+  }, [remiseGlobale]);
 
   // Debug: logger quand champEnFocus change
   useEffect(() => {
@@ -234,14 +259,27 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
     const nouvellesLignes = [...factureEditee.lignes];
     nouvellesLignes[index] = { ...nouvellesLignes[index], ...ligne };
     
-    // Recalculer le total HT
+    // Recalculer le total HT à partir des lignes
     const totalHT = nouvellesLignes.reduce((sum, l) => sum + l.montantHT, 0);
+
+    // Utiliser le taux de TVA issu des données brutes si présent, sinon 20 %
+    const tauxTVA =
+      factureEditee.donneesBrutes && typeof factureEditee.donneesBrutes.tauxTVA === 'number'
+        ? factureEditee.donneesBrutes.tauxTVA
+        : TAUX_TVA_PAR_DEFAUT;
+    const totalTVA = Math.round(totalHT * tauxTVA * 100) / 100;
+    const totalTTC = totalHT + totalTVA;
     
     setFactureEditee({
       ...factureEditee,
       lignes: nouvellesLignes,
       totalHT,
-      totalTTC: totalHT + factureEditee.totalTVA,
+      totalTVA,
+      totalTTC,
+      donneesBrutes: {
+        ...(factureEditee.donneesBrutes || {}),
+        tauxTVA,
+      },
     });
   }, [factureEditee]);
 
@@ -316,10 +354,24 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
     };
     
     const nouvellesLignes = [...factureEditee.lignes, nouvelleLigne];
+    const totalHT = nouvellesLignes.reduce((sum, l) => sum + l.montantHT, 0);
+    const tauxTVA =
+      factureEditee.donneesBrutes && typeof factureEditee.donneesBrutes.tauxTVA === 'number'
+        ? factureEditee.donneesBrutes.tauxTVA
+        : TAUX_TVA_PAR_DEFAUT;
+    const totalTVA = Math.round(totalHT * tauxTVA * 100) / 100;
+    const totalTTC = totalHT + totalTVA;
     
     setFactureEditee({
       ...factureEditee,
       lignes: nouvellesLignes,
+      totalHT,
+      totalTVA,
+      totalTTC,
+      donneesBrutes: {
+        ...(factureEditee.donneesBrutes || {}),
+        tauxTVA,
+      },
     });
   }, [factureEditee]);
 
@@ -328,12 +380,23 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
 
     const nouvellesLignes = factureEditee.lignes.filter((_, i) => i !== index);
     const totalHT = nouvellesLignes.reduce((sum, l) => sum + l.montantHT, 0);
+    const tauxTVA =
+      factureEditee.donneesBrutes && typeof factureEditee.donneesBrutes.tauxTVA === 'number'
+        ? factureEditee.donneesBrutes.tauxTVA
+        : TAUX_TVA_PAR_DEFAUT;
+    const totalTVA = Math.round(totalHT * tauxTVA * 100) / 100;
+    const totalTTC = totalHT + totalTVA;
     
     setFactureEditee({
       ...factureEditee,
       lignes: nouvellesLignes,
       totalHT,
-      totalTTC: totalHT + factureEditee.totalTVA,
+      totalTVA,
+      totalTTC,
+      donneesBrutes: {
+        ...(factureEditee.donneesBrutes || {}),
+        tauxTVA,
+      },
     });
   }, [factureEditee]);
 
@@ -626,6 +689,64 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
               )}
             </div>
             <div className="editeur-parsing__info-item">
+              <strong>Remise HT globale :</strong>
+              {modeEdition ? (
+                <input
+                  type="text"
+                  value={remiseGlobaleBrute}
+                  onChange={(e) => setRemiseGlobaleBrute(e.target.value)}
+                  onBlur={(e) => {
+                    const valeurTexte = e.target.value.replace(',', '.').trim();
+                    const valeur = valeurTexte === '' ? 0 : parseFloat(valeurTexte);
+                    setFactureEditee(prev => {
+                      if (!prev) return prev;
+                      const remise = Number.isNaN(valeur) ? 0 : valeur;
+                      const netHT = totalHTBrut - remise;
+
+                      // Recalculer la TVA à partir du rapport TVA/HT initial
+                      const baseHT = prev.donneesBrutes && typeof prev.donneesBrutes.totalHTBrut === 'number'
+                        ? prev.donneesBrutes.totalHTBrut
+                        : prev.totalHT;
+                      const baseTVA = prev.totalTVA;
+                      const ratioTVA = baseHT > 0 ? baseTVA / baseHT : 0;
+                      const totalTVA = Math.round(netHT * ratioTVA * 100) / 100;
+                      const totalTTC = netHT + totalTVA;
+
+                      return {
+                        ...prev,
+                        totalHT: netHT,
+                        totalTVA,
+                        totalTTC,
+                        donneesBrutes: {
+                          ...(prev.donneesBrutes || {}),
+                          totalHTBrut,
+                          remise,
+                          netHT,
+                        },
+                      };
+                    });
+                  }}
+                  className="editeur-parsing__input-info"
+                />
+              ) : (
+                <span>
+                  {remiseGlobale.toLocaleString('fr-FR', {
+                    style: 'currency',
+                    currency: 'EUR',
+                  })}
+                </span>
+              )}
+            </div>
+            <div className="editeur-parsing__info-item">
+              <strong>Net HT (info) :</strong>
+              <span>
+                {netHTCalcule.toLocaleString('fr-FR', {
+                  style: 'currency',
+                  currency: 'EUR',
+                })}
+              </span>
+            </div>
+            <div className="editeur-parsing__info-item">
               <strong>Total TTC :</strong>
               {modeEdition ? (
                 <input
@@ -648,7 +769,12 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                   className="editeur-parsing__input-info"
                 />
               ) : (
-                <span>{factureEditee.totalTTC.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</span>
+                <span>
+                  {factureEditee.totalTTC.toLocaleString('fr-FR', {
+                    style: 'currency',
+                    currency: 'EUR',
+                  })}
+                </span>
               )}
             </div>
           </div>

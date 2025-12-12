@@ -2,8 +2,8 @@
  * Composant d'affichage des détails d'une facture
  */
 
-import { useState } from 'react';
-import { X, FileText, Calendar, Building2, Hash, AlertTriangle, CheckCircle, Edit, Plus, Trash2 } from 'lucide-react';
+import { useState, useEffect } from 'react';
+import { X, FileText, Calendar, Building2, Hash, AlertTriangle, CheckCircle, Edit, Plus, Trash2, Printer } from 'lucide-react';
 import type { Facture, LigneProduit } from '../types/facture';
 import { obtenirFournisseurs } from '@parsers/index';
 import './DetailsFacture.css';
@@ -12,9 +12,10 @@ interface DetailsFactureProps {
   facture: Facture | null;
   onClose: () => void;
   onUpdate?: (facture: Facture) => void;
+  onDelete?: (factureId: string) => void;
 }
 
-export function DetailsFacture({ facture, onClose, onUpdate }: DetailsFactureProps) {
+export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: DetailsFactureProps) {
   const [editionMode, setEditionMode] = useState(false);
   if (!facture) {
     return (
@@ -41,7 +42,16 @@ export function DetailsFacture({ facture, onClose, onUpdate }: DetailsFacturePro
   };
 
   const totalHTLignes = facture.lignes.reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0);
-  const ecartHT = totalHTLignes - facture.totalHT;
+
+  // Prendre en compte une éventuelle remise globale pour le contrôle
+  const remiseGlobaleFacture =
+    facture.donneesBrutes && typeof facture.donneesBrutes.remise === 'number'
+      ? facture.donneesBrutes.remise
+      : 0;
+
+  const netHTAttendu = totalHTLignes - remiseGlobaleFacture;
+  const ecartHT = netHTAttendu - facture.totalHT;
+
   const totalTTCAttendu = facture.totalHT + facture.totalTVA;
   const ecartTTC = totalTTCAttendu - facture.totalTTC;
   const tolerance = 0.05;
@@ -62,6 +72,35 @@ export function DetailsFacture({ facture, onClose, onUpdate }: DetailsFacturePro
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={() => window.print()}
+            className="details-facture__print-btn"
+            aria-label="Imprimer la facture"
+            title="Imprimer la facture"
+          >
+            <Printer size={18} />
+          </button>
+          {onDelete && (
+            <button
+              type="button"
+              onClick={() => {
+                if (!facture) return;
+                const confirmer = window.confirm(
+                  'Êtes-vous sûr de vouloir supprimer cette facture ?\n\n' +
+                  'Cette action est définitive et tous les règlements associés à cette facture seront également supprimés.'
+                );
+                if (confirmer) {
+                  onDelete(facture.id);
+                }
+              }}
+              className="details-facture__delete-btn"
+              aria-label="Supprimer la facture"
+              title="Supprimer la facture (et ses règlements)"
+            >
+              <Trash2 size={20} />
+            </button>
+          )}
           <button
             type="button"
             onClick={() => setEditionMode(true)}
@@ -99,7 +138,13 @@ export function DetailsFacture({ facture, onClose, onUpdate }: DetailsFacturePro
                 <ul>
                   {ecartHTSignificatif && (
                     <li>
-                      Somme des lignes HT {formaterMontant(totalHTLignes)} vs Total HT déclaré {formaterMontant(facture.totalHT)} (écart {formaterMontant(ecartHT)}).
+                      Somme des lignes HT {formaterMontant(totalHTLignes)}
+                      {remiseGlobaleFacture
+                        ? ` - Remise globale ${formaterMontant(remiseGlobaleFacture)} = Net HT attendu ${formaterMontant(
+                            netHTAttendu
+                          )}`
+                        : ''}{' '}
+                      vs Total HT déclaré {formaterMontant(facture.totalHT)} (écart {formaterMontant(ecartHT)}).
                     </li>
                   )}
                   {ecartTTCSignificatif && (
@@ -262,12 +307,85 @@ interface ModalEditionFactureProps {
   onFermer: () => void;
 }
 
+const TAUX_TVA_PAR_DEFAUT = 0.20;
+
 function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionFactureProps) {
   const [factureModifiee, setFactureModifiee] = useState<Facture>({ ...facture });
   const tousLesFournisseurs = obtenirFournisseurs();
 
+  // Gestion d'une remise HT globale (en fin de facture) via les données brutes
+  const totalHTBrut =
+    (factureModifiee.donneesBrutes && typeof factureModifiee.donneesBrutes.totalHTBrut === 'number'
+      ? factureModifiee.donneesBrutes.totalHTBrut
+      : factureModifiee.totalHT) ?? 0;
+  const remiseGlobale =
+    (factureModifiee.donneesBrutes && typeof factureModifiee.donneesBrutes.remise === 'number'
+      ? factureModifiee.donneesBrutes.remise
+      : 0);
+  const netHTCalcule = Math.max(0, totalHTBrut - remiseGlobale);
+
+  // Saisie brute de la remise globale pour un comportement naturel au clavier
+  const [remiseGlobaleBrute, setRemiseGlobaleBrute] = useState<string>('');
+  const [tauxTVABrute, setTauxTVABrute] = useState<string>('');
+
+  // Synchroniser les champs texte avec les valeurs numériques
+  useEffect(() => {
+    if (remiseGlobale && !Number.isNaN(remiseGlobale)) {
+      setRemiseGlobaleBrute(remiseGlobale.toFixed(2));
+    } else {
+      setRemiseGlobaleBrute('');
+    }
+  }, [remiseGlobale]);
+
+  useEffect(() => {
+    // Déterminer le taux de TVA courant (s'il existe), sinon le calculer à partir des totaux
+    const taux =
+      factureModifiee.donneesBrutes && typeof factureModifiee.donneesBrutes.tauxTVA === 'number'
+        ? factureModifiee.donneesBrutes.tauxTVA
+        : factureModifiee.totalHT > 0
+        ? factureModifiee.totalTVA / factureModifiee.totalHT
+        : TAUX_TVA_PAR_DEFAUT;
+
+    setTauxTVABrute(((taux || 0) * 100).toFixed(2));
+  }, [factureModifiee.totalHT, factureModifiee.totalTVA, factureModifiee.donneesBrutes?.tauxTVA]);
+
+  // Fonction utilitaire : recalcule HT / TVA / TTC à partir des lignes et de la remise globale
+  const recalculerTotaux = (factureCourante: Facture): Facture => {
+    const totalHTLignes = factureCourante.lignes.reduce(
+      (sum, ligne) => sum + ligne.montantHT,
+      0
+    );
+    const remise =
+      factureCourante.donneesBrutes && typeof factureCourante.donneesBrutes.remise === 'number'
+        ? factureCourante.donneesBrutes.remise
+        : 0;
+    const totalHT = Math.max(0, totalHTLignes - remise);
+
+    const tauxTVA =
+      factureCourante.donneesBrutes && typeof factureCourante.donneesBrutes.tauxTVA === 'number'
+        ? factureCourante.donneesBrutes.tauxTVA
+        : TAUX_TVA_PAR_DEFAUT;
+
+    const totalTVA = Math.round(totalHT * tauxTVA * 100) / 100;
+    const totalTTC = totalHT + totalTVA;
+
+    return {
+      ...factureCourante,
+      totalHT,
+      totalTVA,
+      totalTTC,
+      donneesBrutes: {
+        ...(factureCourante.donneesBrutes || {}),
+        totalHTBrut: totalHTLignes,
+        remise,
+        netHT: totalHT,
+        tauxTVA,
+      },
+    };
+  };
+
   const handleChange = (field: keyof Facture, value: unknown) => {
-    setFactureModifiee(prev => ({ ...prev, [field]: value }));
+    setFactureModifiee(prev => recalculerTotaux({ ...prev, [field]: value }));
   };
 
   const handleChangeLigne = (index: number, field: keyof LigneProduit, value: unknown) => {
@@ -281,13 +399,13 @@ function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionF
         const montantHT = (ligne.quantite * ligne.prixUnitaireHT) - ligne.remise;
         nouvellesLignes[index] = { ...ligne, montantHT: Math.max(0, montantHT) };
       }
-      
-      return { ...prev, lignes: nouvellesLignes };
+
+      return recalculerTotaux({ ...prev, lignes: nouvellesLignes });
     });
   };
 
   const handleAjouterLigne = () => {
-    setFactureModifiee(prev => ({
+    setFactureModifiee(prev => recalculerTotaux({
       ...prev,
       lignes: [
         ...prev.lignes,
@@ -303,7 +421,7 @@ function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionF
   };
 
   const handleSupprimerLigne = (index: number) => {
-    setFactureModifiee(prev => ({
+    setFactureModifiee(prev => recalculerTotaux({
       ...prev,
       lignes: prev.lignes.filter((_, i) => i !== index),
     }));
@@ -311,19 +429,8 @@ function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionF
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
-    
-    // Recalculer les totaux à partir des lignes
-    const totalHT = factureModifiee.lignes.reduce((sum, ligne) => sum + ligne.montantHT, 0);
-    const totalTVA = factureModifiee.totalTTC - totalHT;
-    
-    const factureFinale: Facture = {
-      ...factureModifiee,
-      totalHT,
-      totalTVA,
-      // Si totalTTC n'a pas été modifié manuellement, le recalculer
-      totalTTC: factureModifiee.totalTTC || (totalHT + totalTVA),
-    };
-    
+
+    const factureFinale = recalculerTotaux(factureModifiee);
     onSauvegarder(factureFinale);
   };
 
@@ -518,13 +625,70 @@ function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionF
             <h3>Totaux</h3>
             <div className="details-facture__modal-grid">
               <div className="details-facture__modal-field">
+                <label>Taux de TVA (%)</label>
+                <input
+                  type="text"
+                  value={tauxTVABrute}
+                  onChange={(e) => setTauxTVABrute(e.target.value)}
+                  onBlur={(e) => {
+                    const valeurTexte = e.target.value.replace(',', '.').trim();
+                    const valeur = valeurTexte === '' ? 0 : parseFloat(valeurTexte);
+                    const taux = Number.isNaN(valeur) ? TAUX_TVA_PAR_DEFAUT : Math.max(0, valeur) / 100;
+                    setFactureModifiee(prev =>
+                      recalculerTotaux({
+                        ...prev,
+                        donneesBrutes: {
+                          ...(prev.donneesBrutes || {}),
+                          tauxTVA: taux,
+                        },
+                      })
+                    );
+                  }}
+                />
+              </div>
+              <div className="details-facture__modal-field">
+                <label>Remise HT globale (fin de facture)</label>
+                <input
+                  type="text"
+                  value={remiseGlobaleBrute}
+                  onChange={(e) => setRemiseGlobaleBrute(e.target.value)}
+                  onBlur={(e) => {
+                    const valeurTexte = e.target.value.replace(',', '.').trim();
+                    const valeur = valeurTexte === '' ? 0 : parseFloat(valeurTexte);
+                    const nouvelleRemise = Number.isNaN(valeur) ? 0 : valeur;
+                    setFactureModifiee(prev =>
+                      recalculerTotaux({
+                        ...prev,
+                        donneesBrutes: {
+                          ...(prev.donneesBrutes || {}),
+                          totalHTBrut: totalHTBrut || prev.totalHT,
+                          remise: nouvelleRemise,
+                        },
+                      })
+                    );
+                  }}
+                />
+              </div>
+              <div className="details-facture__modal-field">
+                <label>Net HT (après remise globale)</label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={netHTCalcule.toFixed(2)}
+                  readOnly
+                  style={{ backgroundColor: '#f3f4f6' }}
+                />
+              </div>
+              <div className="details-facture__modal-field">
                 <label>Total HT</label>
                 <input
                   type="number"
                   min="0"
                   step="0.01"
                   value={factureModifiee.totalHT.toFixed(2)}
-                  onChange={(e) => handleChange('totalHT', parseFloat(e.target.value) || 0)}
+                  readOnly
+                  style={{ backgroundColor: '#f3f4f6' }}
                 />
               </div>
               <div className="details-facture__modal-field">
@@ -534,7 +698,8 @@ function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionF
                   min="0"
                   step="0.01"
                   value={factureModifiee.totalTVA.toFixed(2)}
-                  onChange={(e) => handleChange('totalTVA', parseFloat(e.target.value) || 0)}
+                  readOnly
+                  style={{ backgroundColor: '#f3f4f6' }}
                 />
               </div>
               <div className="details-facture__modal-field">
@@ -544,8 +709,8 @@ function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionF
                   min="0"
                   step="0.01"
                   value={factureModifiee.totalTTC.toFixed(2)}
-                  onChange={(e) => handleChange('totalTTC', parseFloat(e.target.value) || 0)}
-                  required
+                  readOnly
+                  style={{ backgroundColor: '#f3f4f6' }}
                 />
               </div>
             </div>

@@ -13,6 +13,7 @@ import {
   AlertCircle,
   Calendar,
   Euro,
+  Printer,
 } from 'lucide-react';
 import type { Facture } from '../types/facture';
 import type { 
@@ -54,6 +55,7 @@ export function Reglements({ factures }: ReglementsProps) {
   const [facturesDeveloppees, setFacturesDeveloppees] = useState<Set<string>>(new Set());
   const [afficherModalMarquerRegle, setAfficherModalMarquerRegle] = useState(false);
   const [factureAMarquer, setFactureAMarquer] = useState<Facture | null>(null);
+  const [modeJournal, setModeJournal] = useState<'individuel' | 'mois' | 'annee' | 'fournisseur'>('individuel');
 
   // Charger les règlements au montage
   useEffect(() => {
@@ -254,6 +256,78 @@ export function Reglements({ factures }: ReglementsProps) {
   const fournisseurs = useMemo(() => {
     return Array.from(new Set(factures.map(f => f.fournisseur)));
   }, [factures]);
+
+  // Règlements filtrés pour le journal en fonction des filtres actuels
+  const reglementsFiltresJournal = useMemo(() => {
+    const idsFacturesFiltrees = new Set(facturesFiltrees.map(f => f.id));
+    return reglements.filter(r => {
+      if (!idsFacturesFiltrees.has(r.factureId)) return false;
+      if (statutFiltre && r.statut !== statutFiltre) return false;
+      return true;
+    });
+  }, [reglements, facturesFiltrees, statutFiltre]);
+
+  const journalReglementsIndividuels = useMemo(() => {
+    return [...reglementsFiltresJournal].sort((a, b) => {
+      const da = new Date(a.dateReglement).getTime();
+      const db = new Date(b.dateReglement).getTime();
+      return da - db;
+    });
+  }, [reglementsFiltresJournal]);
+
+  type LigneJournalGroupe = {
+    cle: string;
+    libelle: string;
+    nombre: number;
+    montant: number;
+  };
+
+  const journalGroupes: LigneJournalGroupe[] = useMemo(() => {
+    if (modeJournal === 'individuel') return [];
+
+    const map = new Map<string, LigneJournalGroupe>();
+
+    reglementsFiltresJournal.forEach(r => {
+      const date = r.dateReglement instanceof Date ? r.dateReglement : new Date(r.dateReglement);
+      let cle = '';
+      let libelle = '';
+
+      if (modeJournal === 'fournisseur') {
+        cle = r.fournisseur;
+        libelle = r.fournisseur;
+      } else if (modeJournal === 'annee') {
+        const annee = date.getFullYear();
+        cle = String(annee);
+        libelle = String(annee);
+      } else if (modeJournal === 'mois') {
+        const annee = date.getFullYear();
+        const mois = date.getMonth(); // 0-11
+        cle = `${annee}-${mois}`;
+        libelle = new Intl.DateTimeFormat('fr-FR', {
+          month: 'long',
+          year: 'numeric',
+        }).format(date);
+      }
+
+      if (!cle) return;
+
+      const montant = typeof r.montant === 'number' && !isNaN(r.montant) ? r.montant : 0;
+      const existant = map.get(cle);
+      if (existant) {
+        existant.nombre += 1;
+        existant.montant += montant;
+      } else {
+        map.set(cle, {
+          cle,
+          libelle,
+          nombre: 1,
+          montant,
+        });
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.libelle.localeCompare(b.libelle, 'fr'));
+  }, [modeJournal, reglementsFiltresJournal]);
 
   return (
     <div className="reglements">
@@ -747,10 +821,128 @@ export function Reglements({ factures }: ReglementsProps) {
         })}
       </div>
 
+      {/* Journal des règlements (pour impression et export papier) */}
+      <div className="reglements__journal">
+        <div className="reglements__journal-header">
+          <h2>Journal des règlements</h2>
+          <div className="reglements__journal-actions">
+            <div className="reglements__journal-mode">
+              <label>Vue</label>
+              <select
+                value={modeJournal}
+                onChange={(e) => setModeJournal(e.target.value as typeof modeJournal)}
+              >
+                <option value="individuel">Individuel (tous les règlements)</option>
+                <option value="mois">Regroupé par mois</option>
+                <option value="annee">Regroupé par année</option>
+                <option value="fournisseur">Regroupé par fournisseur</option>
+              </select>
+            </div>
+            <div className="reglements__journal-mode">
+              <label>Fournisseur</label>
+              <select
+                value={fournisseurFiltre}
+                onChange={(e) => setFournisseurFiltre(e.target.value)}
+              >
+                <option value="">Tous</option>
+                {fournisseurs.map((f) => (
+                  <option key={f} value={f}>
+                    {f}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <button
+              type="button"
+              className="reglements__journal-print-btn"
+              onClick={() => window.print()}
+            >
+              <Printer size={18} />
+              Imprimer le journal
+            </button>
+          </div>
+        </div>
+
+        {reglementsFiltresJournal.length === 0 ? (
+          <div className="reglements__journal-empty">
+            <p>Aucun règlement ne correspond aux filtres actuels.</p>
+          </div>
+        ) : modeJournal === 'individuel' ? (
+          <div className="reglements__journal-table-container">
+            <table className="reglements__journal-table">
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Fournisseur</th>
+                  <th>Facture</th>
+                  <th>Montant</th>
+                  <th>Mode</th>
+                  <th>Statut</th>
+                </tr>
+              </thead>
+              <tbody>
+                {journalReglementsIndividuels.map((r) => (
+                  <tr key={r.id}>
+                    <td>{formaterDate(r.dateReglement)}</td>
+                    <td>{r.fournisseur}</td>
+                    <td>{r.numeroFacture}</td>
+                    <td className="reglements__journal-cell-right">
+                      {formaterMontant(r.montant)}
+                    </td>
+                    <td>{r.modePaiement}</td>
+                    <td>
+                      {r.statut === 'paye'
+                        ? 'Payé'
+                        : r.statut === 'en_attente'
+                        ? 'En attente'
+                        : r.statut === 'partiel'
+                        ? 'Partiel'
+                        : r.statut === 'annule'
+                        ? 'Annulé'
+                        : r.statut}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : (
+          <div className="reglements__journal-table-container">
+            <table className="reglements__journal-table">
+              <thead>
+                <tr>
+                  <th>
+                    {modeJournal === 'fournisseur'
+                      ? 'Fournisseur'
+                      : modeJournal === 'annee'
+                      ? 'Année'
+                      : 'Mois'}
+                  </th>
+                  <th>Nombre de règlements</th>
+                  <th>Total réglé</th>
+                </tr>
+              </thead>
+              <tbody>
+                {journalGroupes.map((ligne) => (
+                  <tr key={ligne.cle}>
+                    <td>{ligne.libelle}</td>
+                    <td className="reglements__journal-cell-right">{ligne.nombre}</td>
+                    <td className="reglements__journal-cell-right">
+                      {formaterMontant(ligne.montant)}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
       {/* Modal pour ajouter/éditer un règlement */}
       {afficherModal && (
         <ModalReglement
           factures={factures}
+          etatsReglements={etatsReglements}
           reglement={reglementEdite}
           onSauvegarder={handleSauvegarderReglement}
           onFermer={() => {
@@ -863,12 +1055,13 @@ export function Reglements({ factures }: ReglementsProps) {
 // Composant Modal pour ajouter/éditer un règlement
 interface ModalReglementProps {
   factures: Facture[];
+  etatsReglements: Record<string, EtatReglementFacture>;
   reglement: Reglement | null;
   onSauvegarder: (reglement: Omit<Reglement, 'id' | 'dateCreation' | 'dateModification'>) => void;
   onFermer: () => void;
 }
 
-function ModalReglement({ factures, reglement, onSauvegarder, onFermer }: ModalReglementProps) {
+function ModalReglement({ factures, etatsReglements, reglement, onSauvegarder, onFermer }: ModalReglementProps) {
   const formaterMontant = (montant: number) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
@@ -894,7 +1087,18 @@ function ModalReglement({ factures, reglement, onSauvegarder, onFermer }: ModalR
   const [referencePaiement, setReferencePaiement] = useState(reglement?.referencePaiement || '');
   const [notes, setNotes] = useState(reglement?.notes || '');
 
-  const factureSelectionnee = factures.find(f => f.id === factureId);
+  // Ne proposer dans la liste que les factures avec un montant restant à régler
+  const facturesAvecMontantRestant = useMemo(() => {
+    return factures
+      .map((f) => {
+        const etat = etatsReglements[f.id];
+        const montantRestant = etat ? etat.montantRestant : f.totalTTC;
+        return { facture: f, montantRestant };
+      })
+      .filter(({ montantRestant }) => montantRestant > 0.01);
+  }, [factures, etatsReglements]);
+
+  const factureSelectionnee = facturesAvecMontantRestant.find(f => f.facture.id === factureId)?.facture;
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -936,9 +1140,9 @@ function ModalReglement({ factures, reglement, onSauvegarder, onFermer }: ModalR
               disabled={!!reglement}
             >
               <option value="">Sélectionner une facture</option>
-              {factures.map(f => (
-                <option key={f.id} value={f.id}>
-                  {f.numero} - {f.fournisseur} ({formaterMontant(f.totalTTC)})
+              {facturesAvecMontantRestant.map(({ facture, montantRestant }) => (
+                <option key={facture.id} value={facture.id}>
+                  {facture.numero} - {facture.fournisseur} (Restant: {formaterMontant(montantRestant)})
                 </option>
               ))}
             </select>

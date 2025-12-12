@@ -138,6 +138,11 @@
   border-radius: 8px;
   padding: 1.5rem;
   margin-bottom: 2rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  max-height: calc(100vh - 260px);
+  overflow: auto;
 }
 
 .editeur-parsing__preview-header {
@@ -218,7 +223,7 @@
 
 .editeur-parsing__facture-info {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
   gap: 1rem;
   margin-bottom: 1.5rem;
   padding: 1rem;
@@ -228,15 +233,15 @@
 
 .editeur-parsing__info-item {
   display: flex;
-  flex-direction: row;
-  align-items: center;
-  gap: 0.5rem;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 0.35rem;
 }
 
 .editeur-parsing__info-item strong {
   color: #666;
   font-size: 0.9rem;
-  min-width: 100px;
+  min-width: auto;
 }
 
 .editeur-parsing__input-info {
@@ -245,7 +250,8 @@
   border-radius: 4px;
   font-size: 1rem;
   flex: 1;
-  max-width: 200px;
+  width: 100%;
+  max-width: 100%;
 }
 
 .editeur-parsing__input-info:focus {
@@ -259,10 +265,16 @@
   font-size: 1.1rem;
 }
 
+.editeur-parsing__lignes {
+  overflow-x: auto;
+}
+
 .editeur-parsing__table {
   width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
+  table-layout: fixed;
+  min-width: 900px;
 }
 
 .editeur-parsing__table thead {
@@ -275,11 +287,13 @@
   font-weight: 600;
   border-bottom: 2px solid #dee2e6;
   color: #495057;
+  white-space: nowrap;
 }
 
 .editeur-parsing__table td {
   padding: 0.75rem;
   border-bottom: 1px solid #dee2e6;
+  vertical-align: top;
 }
 
 .editeur-parsing__table tbody tr:hover {
@@ -378,6 +392,10 @@
   .editeur-parsing__preview-actions {
     width: 100%;
     flex-wrap: wrap;
+  }
+
+  .editeur-parsing__facture-info {
+    grid-template-columns: 1fr;
   }
 
   .editeur-parsing__table {

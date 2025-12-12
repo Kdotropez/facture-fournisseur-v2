@@ -21,6 +21,7 @@ export function chargerFactures(): Facture[] {
     // Convertir les dates string en objets Date et normaliser le nom du fournisseur
     return factures.map(f => ({
       ...f,
+      statut: f.statut ?? 'active',
       fournisseur: normaliserNomFournisseur(f.fournisseur),
       date: new Date(f.date),
       dateLivraison: f.dateLivraison ? new Date(f.dateLivraison) : undefined,

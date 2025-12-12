@@ -346,6 +346,26 @@
   color: #3b82f6;
 }
 
+.details-facture__print-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 40px;
+  height: 40px;
+  background: #f3f4f6;
+  border: none;
+  border-radius: 8px;
+  cursor: pointer;
+  color: #374151;
+  transition: all 0.2s;
+  flex-shrink: 0;
+}
+
+.details-facture__print-btn:hover {
+  background: #e5e7eb;
+  color: #111827;
+}
+
 
 /* Modal d'édition */
 .details-facture__modal-overlay {
@@ -597,6 +617,31 @@
 
   .details-facture__modal-field--large {
     grid-column: span 1;
+  }
+}
+
+@media print {
+  .app__header,
+  .app__vue-fournisseur,
+  .app__factures-layout,
+  .app__statistiques,
+  .app__import,
+  .app__editeur,
+  .app__reglements {
+    display: none !important;
+  }
+
+  .details-facture {
+    box-shadow: none;
+    border-radius: 0;
+    padding: 1.5rem;
+  }
+
+  .details-facture__close-btn,
+  .details-facture__edit-btn,
+  .details-facture__delete-btn,
+  .details-facture__print-btn {
+    display: none !important;
   }
 }
 

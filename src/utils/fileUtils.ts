@@ -29,3 +29,6 @@ export function lireFichierEnDataURL(fichier: File): Promise<string> {
 
 
 
+
+
+

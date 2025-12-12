@@ -29,6 +29,38 @@ import { creerSauvegardeGlobale, restaurerSauvegardeGlobale, SauvegardeGlobale }
 import { exporterSauvegardeVersGoogleDrive } from './services/googleDriveService';
 import { chargerDevis } from './services/devisService';
 
+// Utilitaire pour télécharger une sauvegarde globale au format JSON
+function telechargerSauvegardeJSON(
+  sauvegarde: SauvegardeGlobale,
+  type: 'complet' | 'auto'
+): void {
+  try {
+    const donnees = JSON.stringify(sauvegarde, null, 2);
+    const maintenant = new Date();
+    const mois = String(maintenant.getMonth() + 1).padStart(2, '0'); // 01-12
+    const anneeDeuxChiffres = String(maintenant.getFullYear()).slice(-2); // 25 pour 2025
+
+    // Nom principal demandé : "facture-mm-aa" pour la sauvegarde générale
+    const baseNom = `facture-${mois}-${anneeDeuxChiffres}`;
+    const nomFichier =
+      type === 'complet'
+        ? `${baseNom}.json`
+        : `${baseNom}-auto.json`;
+
+    const blob = new Blob([donnees], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nomFichier;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  } catch (error) {
+    console.warn('[Sauvegarde] Impossible de créer le fichier JSON de sauvegarde:', error);
+  }
+}
+
 type Vue = 'factures' | 'devis' | 'statistiques' | 'import' | 'editeur' | 'reglements';
 
 function App() {
@@ -50,6 +82,7 @@ function App() {
     fournisseurFiltre,
     setFournisseurFiltre,
     ajouterFacture,
+    supprimerFacture,
     mettreAJourFacture,
     remplacerFactures,
   } = useFactures();
@@ -71,6 +104,60 @@ function App() {
   // Par défaut, afficher tous les fournisseurs
   const [fournisseursSelectionnes, setFournisseursSelectionnes] = useState<Fournisseur[]>([]);
 
+  // Sauvegarde automatique quotidienne (localStorage + Google Drive si configuré)
+  useEffect(() => {
+    // Ne rien faire côté serveur ou si aucune donnée
+    if (typeof window === 'undefined') return;
+    if (toutesLesFactures.length === 0 && tousLesDevis.length === 0) return;
+
+    try {
+      const cleDerniereSauvegarde = 'auto-backup-derniere-sauvegarde';
+      const maintenant = Date.now();
+      const derniereStr = localStorage.getItem(cleDerniereSauvegarde);
+
+      if (derniereStr) {
+        const derniere = parseInt(derniereStr, 10);
+        const unJour = 24 * 60 * 60 * 1000;
+        if (!isNaN(derniere) && maintenant - derniere < unJour) {
+          // Une sauvegarde automatique a déjà été faite il y a moins de 24h
+          return;
+        }
+      }
+
+      // Créer une sauvegarde globale et l'enrichir avec les factures/devis en mémoire (incluant les PDF si présents)
+      const sauvegardeDeBase = creerSauvegardeGlobale();
+      const sauvegardeComplete: SauvegardeGlobale = {
+        ...sauvegardeDeBase,
+        donnees: {
+          ...sauvegardeDeBase.donnees,
+          // Copies complètes, telles qu'affichées dans l'application (peuvent contenir pdfOriginal)
+          'factures-fournisseurs-complet': toutesLesFactures,
+          'devis-fournisseurs-complet': tousLesDevis,
+        },
+      };
+
+      // Stocker aussi la sauvegarde complète dans le localStorage
+      localStorage.setItem('auto-backup-dernier-contenu', JSON.stringify(sauvegardeComplete));
+      localStorage.setItem(cleDerniereSauvegarde, String(maintenant));
+
+      // Télécharger automatiquement un fichier JSON sur le disque (dossier Téléchargements)
+      telechargerSauvegardeJSON(sauvegardeComplete, 'auto');
+
+      // Essayer d'envoyer la sauvegarde vers Google Drive, sans bloquer l'UI
+      (async () => {
+        try {
+          await exporterSauvegardeVersGoogleDrive(sauvegardeComplete, 'factures fournisseur');
+          console.log('[Sauvegarde] Sauvegarde automatique envoyée vers Google Drive');
+        } catch (driveError) {
+          // Ne pas gêner l'utilisateur si Drive n'est pas configuré
+          console.warn('[Sauvegarde] Sauvegarde Google Drive automatique non effectuée:', driveError);
+        }
+      })();
+    } catch (error) {
+      console.warn('[Sauvegarde] Erreur lors de la sauvegarde automatique:', error);
+    }
+  }, [toutesLesFactures.length, tousLesDevis.length]);
+
   // Synchroniser fournisseursSelectionnes avec fournisseurFiltre quand il change depuis l'extérieur
   useEffect(() => {
     if (fournisseurFiltre && !fournisseursSelectionnes.includes(fournisseurFiltre)) {
@@ -79,7 +166,7 @@ function App() {
       // Si le filtre est supprimé et qu'on avait un seul fournisseur sélectionné, on peut le garder ou le vider
       // On garde pour l'instant
     }
-  }, [fournisseurFiltre]);
+  }, [fournisseurFiltre, fournisseursSelectionnes]);
   
   // Fonction pour forcer le rechargement des factures
   const forcerRechargementFactures = () => {
@@ -408,22 +495,22 @@ function App() {
 
   const handleExporterSauvegardeGlobale = async () => {
     try {
-      const sauvegarde = creerSauvegardeGlobale();
-      const donnees = JSON.stringify(sauvegarde, null, 2);
-      const nomFichier = `backup-complet-${new Date().toISOString().slice(0, 10)}.json`;
-      const blob = new Blob([donnees], { type: 'application/json' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = nomFichier;
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
+      // Même logique que l’auto-sauvegarde : on enrichit avec les données complètes en mémoire
+      const sauvegardeDeBase = creerSauvegardeGlobale();
+      const sauvegardeComplete: SauvegardeGlobale = {
+        ...sauvegardeDeBase,
+        donnees: {
+          ...sauvegardeDeBase.donnees,
+          'factures-fournisseurs-complet': toutesLesFactures,
+          'devis-fournisseurs-complet': tousLesDevis,
+        },
+      };
+
+      telechargerSauvegardeJSON(sauvegardeComplete, 'complet');
 
       // Export automatique vers Google Drive si configuré
       try {
-        await exporterSauvegardeVersGoogleDrive(sauvegarde, 'factures fournisseur');
+        await exporterSauvegardeVersGoogleDrive(sauvegardeComplete, 'factures fournisseur');
       } catch (driveError) {
         console.warn('Export Google Drive échoué ou non configuré:', driveError);
         // Ne pas bloquer l’utilisateur : le téléchargement local a déjà été fait
@@ -702,6 +789,20 @@ function App() {
                   const facturesChargees = chargerFactures();
                   remplacerFactures(facturesChargees);
                 }}
+                onSupprimerFacture={(id) => {
+                  const confirmer = window.confirm(
+                    'Êtes-vous sûr de vouloir supprimer cette facture ?\n\n' +
+                    'Cette action est définitive et tous les règlements associés à cette facture seront également supprimés.'
+                  );
+                  if (!confirmer) {
+                    return;
+                  }
+
+                  supprimerFacture(id);
+                  if (factureSelectionnee && factureSelectionnee.id === id) {
+                    setFactureSelectionnee(null);
+                  }
+                }}
               />
             </div>
             {factureSelectionnee && (
@@ -712,6 +813,18 @@ function App() {
                   onUpdate={(factureModifiee) => {
                     mettreAJourFacture(factureModifiee);
                     setFactureSelectionnee(factureModifiee);
+                  }}
+                  onDelete={(id) => {
+                    const confirmer = window.confirm(
+                      'Êtes-vous sûr de vouloir supprimer cette facture ?\n\n' +
+                      'Cette action est définitive et tous les règlements associés à cette facture seront également supprimés.'
+                    );
+                    if (!confirmer) {
+                      return;
+                    }
+
+                    supprimerFacture(id);
+                    setFactureSelectionnee(null);
                   }}
                 />
               </div>

@@ -135,13 +135,79 @@ export function mettreAJourReglement(id: string, modifications: Partial<Reglemen
  */
 export function supprimerReglement(id: string): boolean {
   const reglements = chargerReglements();
-  const index = reglements.findIndex(r => r.id === id);
-  
-  if (index === -1) {
+  const nouveauxReglements = reglements.filter(r => r.id !== id);
+  if (nouveauxReglements.length === reglements.length) {
     return false;
   }
-  
-  reglements.splice(index, 1);
+
+  sauvegarderReglements(nouveauxReglements);
+  return true;
+}
+
+/**
+ * Supprime tous les règlements associés à une facture donnée
+ */
+export function supprimerReglementsParFactureId(factureId: string): number {
+  const reglements = chargerReglements();
+  const nouveauxReglements = reglements.filter(r => r.factureId !== factureId);
+  const nombreSupprimes = reglements.length - nouveauxReglements.length;
+
+  if (nombreSupprimes > 0) {
+    sauvegarderReglements(nouveauxReglements);
+  }
+
+  return nombreSupprimes;
+}
+
+/**
+ * Supprime tous les règlements associés à plusieurs factures
+ */
+export function supprimerReglementsParFactureIds(factureIds: string[]): number {
+  const idsSet = new Set(factureIds);
+  const reglements = chargerReglements();
+  const nouveauxReglements = reglements.filter(r => !idsSet.has(r.factureId));
+  const nombreSupprimes = reglements.length - nouveauxReglements.length;
+
+  if (nombreSupprimes > 0) {
+    sauvegarderReglements(nouveauxReglements);
+  }
+
+  return nombreSupprimes;
+}
+
+/**
+ * Supprime tous les règlements d'un fournisseur (utile si on supprime un fournisseur)
+ */
+export function supprimerReglementsParFournisseur(fournisseur: Fournisseur): number {
+  const reglements = chargerReglements();
+  const nouveauxReglements = reglements.filter(r => r.fournisseur !== fournisseur);
+  const nombreSupprimes = reglements.length - nouveauxReglements.length;
+
+  if (nombreSupprimes > 0) {
+    sauvegarderReglements(nouveauxReglements);
+  }
+
+  return nombreSupprimes;
+}
+
+/**
+ * Supprime tous les règlements (utilisé uniquement pour des opérations de maintenance)
+ */
+export function supprimerTousLesReglements(): void {
+  sauvegarderReglements([]);
+}
+
+/**
+ * Supprime un règlement (ancienne API conservée pour compatibilité)
+ * @deprecated Utiliser supprimerReglementsParFactureId ou supprimerReglementsParFactureIds si possible
+ */
+export function supprimerReglementParId(id: string): boolean {
+  const reglements = chargerReglements();
+  const nouveauxReglements = reglements.filter(r => r.id !== id);
+  if (nouveauxReglements.length === reglements.length) {
+    return false;
+  }
+
   sauvegarderReglements(reglements);
   return true;
 }

@@ -14,6 +14,7 @@ import {
   rechercherFactures,
   filtrerParFournisseur,
 } from '../services/factureService';
+import { supprimerReglementsParFactureId } from '../services/reglementService';
 
 export function useFactures() {
   const [factures, setFactures] = useState<Facture[]>([]);
@@ -42,6 +43,14 @@ export function useFactures() {
 
   // Supprimer une facture
   const supprimerFacture = useCallback((id: string) => {
+    // Supprimer d'abord tous les règlements associés à cette facture
+    try {
+      supprimerReglementsParFactureId(id);
+    } catch (error) {
+      console.error('Erreur lors de la suppression des règlements liés à la facture:', error);
+    }
+
+    // Puis supprimer la facture elle-même
     supprimerFactureService(id);
     setFactures(prev => prev.filter(f => f.id !== id));
   }, []);
