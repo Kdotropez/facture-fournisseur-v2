@@ -20,8 +20,8 @@ export function useDevis() {
   const [termeRecherche, setTermeRecherche] = useState('');
   const [fournisseurFiltre, setFournisseurFiltre] = useState<Fournisseur | null>(null);
 
-  const rechargerDevis = useCallback(() => {
-    const devisCharges = chargerDevis();
+  const rechargerDevis = useCallback(async () => {
+    const devisCharges = await chargerDevis();
     setDevis(devisCharges);
     setChargement(false);
   }, []);
@@ -30,24 +30,24 @@ export function useDevis() {
     rechargerDevis();
   }, [rechargerDevis]);
 
-  const ajouterDevis = useCallback((nouveauDevis: Devis) => {
-    ajouterDevisService(nouveauDevis);
-    const devisCharges = chargerDevis();
+  const ajouterDevis = useCallback(async (nouveauDevis: Devis) => {
+    await ajouterDevisService(nouveauDevis);
+    const devisCharges = await chargerDevis();
     setDevis(devisCharges);
   }, []);
 
-  const supprimerDevis = useCallback((id: string) => {
-    supprimerDevisService(id);
+  const supprimerDevis = useCallback(async (id: string) => {
+    await supprimerDevisService(id);
     setDevis(prev => prev.filter(d => d.id !== id));
   }, []);
 
-  const mettreAJourDevis = useCallback((devisModifie: Devis) => {
-    mettreAJourDevisService(devisModifie);
+  const mettreAJourDevis = useCallback(async (devisModifie: Devis) => {
+    await mettreAJourDevisService(devisModifie);
     setDevis(prev => prev.map(d => (d.id === devisModifie.id ? devisModifie : d)));
   }, []);
 
-  const remplacerDevis = useCallback((nouveauxDevis: Devis[]) => {
-    sauvegarderDevis(nouveauxDevis);
+  const remplacerDevis = useCallback(async (nouveauxDevis: Devis[]) => {
+    await sauvegarderDevis(nouveauxDevis);
     setDevis(nouveauxDevis);
   }, []);
 

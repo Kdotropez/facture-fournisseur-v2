@@ -3,7 +3,7 @@
  */
 
 import { useRef, useState, useEffect } from 'react';
-import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard, FileSignature, X, Cloud } from 'lucide-react';
+import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard, FileSignature, X, Cloud, FolderOpen } from 'lucide-react';
 import { useFactures } from './hooks/useFactures';
 import { useDevis } from './hooks/useDevis';
 import { useImportPDF, detecterFournisseurDepuisContenu } from './hooks/useImportPDF';
@@ -27,13 +27,42 @@ import { rechercherFacturesPerdues, afficherRapportDiagnostic, creerBackupFactur
 import { chargerFactures } from './services/factureService';
 import { creerSauvegardeGlobale, restaurerSauvegardeGlobale, SauvegardeGlobale } from './services/sauvegardeGlobaleService';
 import { exporterSauvegardeVersGoogleDrive } from './services/googleDriveService';
+import {
+  chargerHandleDossierSauvegarde,
+  demanderDossierSauvegarde,
+  verifierPermissionDossier,
+} from './utils/directoryHandleStore';
 import { chargerDevis } from './services/devisService';
 
+const CHEMIN_DOSSIER_SAUVEGARDE = 'C:\\Users\\lefev\\Projets\\FACTURES FOURNISSEURS\\sauvegarde';
+
+async function essayerSauvegardeDansDossier(
+  donnees: Blob,
+  nomFichier: string
+): Promise<boolean> {
+  const handle = await chargerHandleDossierSauvegarde();
+  if (!handle) return false;
+
+  const ok = await verifierPermissionDossier(handle);
+  if (!ok) return false;
+
+  try {
+    const fichier = await handle.getFileHandle(nomFichier, { create: true });
+    const writable = await fichier.createWritable();
+    await writable.write(donnees);
+    await writable.close();
+    return true;
+  } catch (error) {
+    console.warn('[Sauvegarde] Impossible d’écrire dans le dossier choisi:', error);
+    return false;
+  }
+}
+
 // Utilitaire pour télécharger une sauvegarde globale au format JSON
-function telechargerSauvegardeJSON(
+async function telechargerSauvegardeJSON(
   sauvegarde: SauvegardeGlobale,
   type: 'complet' | 'auto'
-): void {
+): Promise<void> {
   try {
     const donnees = JSON.stringify(sauvegarde, null, 2);
     const maintenant = new Date();
@@ -48,14 +77,18 @@ function telechargerSauvegardeJSON(
         : `${baseNom}-auto.json`;
 
     const blob = new Blob([donnees], { type: 'application/json' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = nomFichier;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    const sauvegardeOk = await essayerSauvegardeDansDossier(blob, nomFichier);
+
+    if (!sauvegardeOk) {
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = nomFichier;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    }
   } catch (error) {
     console.warn('[Sauvegarde] Impossible de créer le fichier JSON de sauvegarde:', error);
   }
@@ -110,52 +143,54 @@ function App() {
     if (typeof window === 'undefined') return;
     if (toutesLesFactures.length === 0 && tousLesDevis.length === 0) return;
 
-    try {
-      const cleDerniereSauvegarde = 'auto-backup-derniere-sauvegarde';
-      const maintenant = Date.now();
-      const derniereStr = localStorage.getItem(cleDerniereSauvegarde);
+    (async () => {
+      try {
+        const cleDerniereSauvegarde = 'auto-backup-derniere-sauvegarde';
+        const maintenant = Date.now();
+        const derniereStr = localStorage.getItem(cleDerniereSauvegarde);
 
-      if (derniereStr) {
-        const derniere = parseInt(derniereStr, 10);
-        const unJour = 24 * 60 * 60 * 1000;
-        if (!isNaN(derniere) && maintenant - derniere < unJour) {
-          // Une sauvegarde automatique a déjà été faite il y a moins de 24h
-          return;
+        if (derniereStr) {
+          const derniere = parseInt(derniereStr, 10);
+          const unJour = 24 * 60 * 60 * 1000;
+          if (!isNaN(derniere) && maintenant - derniere < unJour) {
+            // Une sauvegarde automatique a déjà été faite il y a moins de 24h
+            return;
+          }
         }
+
+        // Créer une sauvegarde globale et l'enrichir avec les factures/devis en mémoire (incluant les PDF si présents)
+        const sauvegardeDeBase = await creerSauvegardeGlobale();
+        const sauvegardeComplete: SauvegardeGlobale = {
+          ...sauvegardeDeBase,
+          donnees: {
+            ...sauvegardeDeBase.donnees,
+            // Copies complètes, telles qu'affichées dans l'application (peuvent contenir pdfOriginal)
+            'factures-fournisseurs-complet': toutesLesFactures,
+            'devis-fournisseurs-complet': tousLesDevis,
+          },
+        };
+
+        // Stocker aussi la sauvegarde complète dans le localStorage
+        localStorage.setItem('auto-backup-dernier-contenu', JSON.stringify(sauvegardeComplete));
+        localStorage.setItem(cleDerniereSauvegarde, String(maintenant));
+
+        // Télécharger automatiquement un fichier JSON sur le disque (dossier Téléchargements)
+        void telechargerSauvegardeJSON(sauvegardeComplete, 'auto');
+
+        // Essayer d'envoyer la sauvegarde vers Google Drive, sans bloquer l'UI
+        (async () => {
+          try {
+            await exporterSauvegardeVersGoogleDrive(sauvegardeComplete, 'factures fournisseur');
+            console.log('[Sauvegarde] Sauvegarde automatique envoyée vers Google Drive');
+          } catch (driveError) {
+            // Ne pas gêner l'utilisateur si Drive n'est pas configuré
+            console.warn('[Sauvegarde] Sauvegarde Google Drive automatique non effectuée:', driveError);
+          }
+        })();
+      } catch (error) {
+        console.warn('[Sauvegarde] Erreur lors de la sauvegarde automatique:', error);
       }
-
-      // Créer une sauvegarde globale et l'enrichir avec les factures/devis en mémoire (incluant les PDF si présents)
-      const sauvegardeDeBase = creerSauvegardeGlobale();
-      const sauvegardeComplete: SauvegardeGlobale = {
-        ...sauvegardeDeBase,
-        donnees: {
-          ...sauvegardeDeBase.donnees,
-          // Copies complètes, telles qu'affichées dans l'application (peuvent contenir pdfOriginal)
-          'factures-fournisseurs-complet': toutesLesFactures,
-          'devis-fournisseurs-complet': tousLesDevis,
-        },
-      };
-
-      // Stocker aussi la sauvegarde complète dans le localStorage
-      localStorage.setItem('auto-backup-dernier-contenu', JSON.stringify(sauvegardeComplete));
-      localStorage.setItem(cleDerniereSauvegarde, String(maintenant));
-
-      // Télécharger automatiquement un fichier JSON sur le disque (dossier Téléchargements)
-      telechargerSauvegardeJSON(sauvegardeComplete, 'auto');
-
-      // Essayer d'envoyer la sauvegarde vers Google Drive, sans bloquer l'UI
-      (async () => {
-        try {
-          await exporterSauvegardeVersGoogleDrive(sauvegardeComplete, 'factures fournisseur');
-          console.log('[Sauvegarde] Sauvegarde automatique envoyée vers Google Drive');
-        } catch (driveError) {
-          // Ne pas gêner l'utilisateur si Drive n'est pas configuré
-          console.warn('[Sauvegarde] Sauvegarde Google Drive automatique non effectuée:', driveError);
-        }
-      })();
-    } catch (error) {
-      console.warn('[Sauvegarde] Erreur lors de la sauvegarde automatique:', error);
-    }
+    })();
   }, [toutesLesFactures.length, tousLesDevis.length]);
 
   // Synchroniser fournisseursSelectionnes avec fournisseurFiltre quand il change depuis l'extérieur
@@ -247,7 +282,7 @@ function App() {
   };
 
   const handleDevisCree = (devis: Devis) => {
-    ajouterDevis(devis);
+    void ajouterDevis(devis);
     setDevisSelectionne(devis);
     setEditeurDevisOuvert(false);
   };
@@ -306,7 +341,7 @@ function App() {
       donneesBrutes: facture.donneesBrutes,
     };
 
-    ajouterDevis(devis);
+    await ajouterDevis(devis);
     setDevisSelectionne(devis);
     setVueActive('devis');
   };
@@ -497,7 +532,7 @@ function App() {
   const handleExporterSauvegardeGlobale = async () => {
     try {
       // Même logique que l’auto-sauvegarde : on enrichit avec les données complètes en mémoire
-      const sauvegardeDeBase = creerSauvegardeGlobale();
+      const sauvegardeDeBase = await creerSauvegardeGlobale();
       const sauvegardeComplete: SauvegardeGlobale = {
         ...sauvegardeDeBase,
         donnees: {
@@ -507,7 +542,7 @@ function App() {
         },
       };
 
-      telechargerSauvegardeJSON(sauvegardeComplete, 'complet');
+      await telechargerSauvegardeJSON(sauvegardeComplete, 'complet');
 
       // Export automatique vers Google Drive si configuré
       try {
@@ -519,6 +554,25 @@ function App() {
     } catch (error) {
       console.error('Erreur lors de l’export global:', error);
       setErreur('Impossible d’exporter les données. Réessayez ou vérifiez la console.');
+    }
+  };
+
+  const handleChoisirDossierSauvegarde = async () => {
+    try {
+      const handle = await demanderDossierSauvegarde();
+      if (!handle) {
+        alert('Votre navigateur ne permet pas de choisir un dossier.');
+        return;
+      }
+      alert(
+        `Dossier de sauvegarde défini.\nVeuillez choisir :\n${CHEMIN_DOSSIER_SAUVEGARDE}`
+      );
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        return;
+      }
+      console.warn('[Sauvegarde] Choix du dossier annulé ou impossible:', error);
+      alert('Impossible de définir le dossier de sauvegarde.');
     }
   };
 
@@ -614,13 +668,13 @@ function App() {
 
       // Nouvelle version : sauvegarde globale
       const sauvegarde = json as SauvegardeGlobale;
-      restaurerSauvegardeGlobale(sauvegarde);
+      await restaurerSauvegardeGlobale(sauvegarde);
 
       // Recharger les factures et devis depuis le localStorage restauré
       const facturesRech = chargerFactures();
       remplacerFactures(facturesRech);
-      const devisRech = chargerDevis();
-      remplacerDevis(devisRech);
+      const devisRech = await chargerDevis();
+      await remplacerDevis(devisRech);
 
       setFactureSelectionnee(null);
       setDevisSelectionne(null);
@@ -719,6 +773,15 @@ function App() {
             >
               <Download size={18} />
               Export global + Google Drive
+            </button>
+            <button
+              type="button"
+              className="app__restore-btn"
+              onClick={handleChoisirDossierSauvegarde}
+              title={`Dossier cible : ${CHEMIN_DOSSIER_SAUVEGARDE}`}
+            >
+              <FolderOpen size={18} />
+              Dossier sauvegarde
             </button>
             <button
               type="button"
@@ -895,7 +958,7 @@ function App() {
                 onDevisSelect={handleDevisSelect}
                 devisSelectionne={devisSelectionne}
                 onSupprimerDevis={(id) => {
-                  supprimerDevis(id);
+                  void supprimerDevis(id);
                   if (devisSelectionne && devisSelectionne.id === id) {
                     setDevisSelectionne(null);
                   }
@@ -914,7 +977,7 @@ function App() {
                   toutesLesFactures={toutesLesFactures}
                   onClose={() => setDevisSelectionne(null)}
                   onUpdate={(devisModifie) => {
-                    mettreAJourDevis(devisModifie);
+                    void mettreAJourDevis(devisModifie);
                     setDevisSelectionne(devisModifie);
                   }}
                 />
@@ -1058,12 +1121,12 @@ function App() {
             <StatistiquesComponent
               factures={toutesLesFactures}
               onVoirFacture={handleVoirFacture}
-              onFournisseursMisAJour={() => {
+              onFournisseursMisAJour={async () => {
                 // Recharger les factures et devis après renommage d'un fournisseur
                 const facturesRech = chargerFactures();
                 remplacerFactures(facturesRech);
-                const devisRech = chargerDevis();
-                remplacerDevis(devisRech);
+                const devisRech = await chargerDevis();
+                await remplacerDevis(devisRech);
               }}
             />
           </div>

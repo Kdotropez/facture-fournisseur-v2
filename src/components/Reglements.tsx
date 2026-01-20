@@ -104,16 +104,13 @@ export function Reglements({ factures }: ReglementsProps) {
     });
   }, [reglements, exerciceFiltre]);
 
-  const facturesPourStats = useMemo(() => {
-    if (!exerciceFiltre) return factures;
-    const idsFactures = new Set(reglementsExercice.map(r => r.factureId));
-    return factures.filter(f => idsFactures.has(f.id));
-  }, [factures, exerciceFiltre, reglementsExercice]);
-
   // Calculer les statistiques
   const statistiques = useMemo(() => {
-    return calculerStatistiquesReglements(facturesPourStats, exerciceFiltre ? reglementsExercice : undefined);
-  }, [facturesPourStats, reglementsExercice, exerciceFiltre]);
+    return calculerStatistiquesReglements(
+      facturesFiltrees,
+      exerciceFiltre ? reglementsExercice : undefined
+    );
+  }, [facturesFiltrees, reglementsExercice, exerciceFiltre]);
 
   // Filtrer les factures
   const facturesFiltrees = useMemo(() => {
@@ -137,12 +134,7 @@ export function Reglements({ factures }: ReglementsProps) {
       }
 
       if (exerciceFiltre) {
-        const aDesReglementsDansExercice = reglements.some(r => {
-          if (r.factureId !== facture.id) return false;
-          const exercice = obtenirExerciceFiscal(new Date(r.dateReglement));
-          return exercice === exerciceFiltre;
-        });
-        if (!aDesReglementsDansExercice) return false;
+        if (!factureDansExercice(facture, exerciceFiltre)) return false;
       }
 
       return true;
@@ -162,6 +154,20 @@ export function Reglements({ factures }: ReglementsProps) {
       month: '2-digit',
       year: 'numeric',
     }).format(date);
+  };
+
+  const factureDansExercice = (facture: Facture, exercice: string): boolean => {
+    const reglementsFacture = reglements.filter(r => r.factureId === facture.id);
+    if (reglementsFacture.length > 0) {
+      return reglementsFacture.some(r => {
+        const exerciceReglement = obtenirExerciceFiscal(new Date(r.dateReglement));
+        return exerciceReglement === exercice;
+      });
+    }
+
+    const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+    const exerciceFacture = obtenirExerciceFiscal(dateFacture);
+    return exerciceFacture === exercice;
   };
 
   const handleAjouterReglement = () => {
@@ -1048,6 +1054,7 @@ export function Reglements({ factures }: ReglementsProps) {
           reglement={reglementEdite}
           facturePreselectionneeId={facturePourNouveauReglement?.id}
           exerciceFiltre={exerciceFiltre}
+          reglements={reglements}
           onSauvegarder={handleSauvegarderReglement}
           onFermer={() => {
             setAfficherModal(false);
@@ -1164,6 +1171,7 @@ interface ModalReglementProps {
   reglement: Reglement | null;
   facturePreselectionneeId?: string;
   exerciceFiltre?: string;
+  reglements: Reglement[];
   onSauvegarder: (reglement: Omit<Reglement, 'id' | 'dateCreation' | 'dateModification'>) => void;
   onFermer: () => void;
 }
@@ -1174,6 +1182,7 @@ function ModalReglement({
   reglement,
   facturePreselectionneeId,
   exerciceFiltre,
+  reglements,
   onSauvegarder,
   onFermer,
 }: ModalReglementProps) {
@@ -1202,6 +1211,20 @@ function ModalReglement({
   const [referencePaiement, setReferencePaiement] = useState(reglement?.referencePaiement || '');
   const [notes, setNotes] = useState(reglement?.notes || '');
 
+  const factureDansExercice = (facture: Facture, exercice: string): boolean => {
+    const reglementsFacture = reglements.filter(r => r.factureId === facture.id);
+    if (reglementsFacture.length > 0) {
+      return reglementsFacture.some(r => {
+        const exerciceReglement = obtenirExerciceFiscal(new Date(r.dateReglement));
+        return exerciceReglement === exercice;
+      });
+    }
+
+    const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+    const exerciceFacture = obtenirExerciceFiscal(dateFacture);
+    return exerciceFacture === exercice;
+  };
+
   useEffect(() => {
     if (!reglement && facturePreselectionneeId) {
       setFactureId(facturePreselectionneeId);
@@ -1219,9 +1242,9 @@ function ModalReglement({
       .filter(({ facture, montantRestant }) => {
         if (montantRestant <= 0.01) return false;
         if (!exerciceFiltre) return true;
-        return obtenirExerciceFiscal(new Date(facture.date)) === exerciceFiltre;
+        return factureDansExercice(facture, exerciceFiltre);
       });
-  }, [factures, etatsReglements, exerciceFiltre]);
+  }, [factures, etatsReglements, exerciceFiltre, reglements]);
 
   const factureSelectionnee = facturesAvecMontantRestant.find(f => f.facture.id === factureId)?.facture;
 

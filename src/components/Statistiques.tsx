@@ -785,7 +785,7 @@ export function StatistiquesComponent({
             </div>
             <form
               className="statistiques__modal-form"
-              onSubmit={(e) => {
+              onSubmit={async (e) => {
                 e.preventDefault();
                 if (!fournisseurEnEdition) return;
                 const nouveauNom = nouveauNomFournisseur.trim();
@@ -794,7 +794,7 @@ export function StatistiquesComponent({
                   return;
                 }
 
-                renommerFournisseurGlobal(
+                await renommerFournisseurGlobal(
                   fournisseurEnEdition as Fournisseur,
                   nouveauNom as Fournisseur
                 );

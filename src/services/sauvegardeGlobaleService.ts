@@ -4,6 +4,8 @@
  */
 
 import type { Fournisseur } from '../types/facture';
+import type { Devis } from '../types/devis';
+import { ecrireDevisDansIdb, lireDevisDepuisIdb } from '../utils/devisStorage';
 
 export interface SauvegardeGlobale {
   version: 1;
@@ -27,7 +29,7 @@ const STORAGE_KEYS_IMPORTANTES: string[] = [
 /**
  * Crée un objet de sauvegarde globale à partir du localStorage actuel.
  */
-export function creerSauvegardeGlobale(): SauvegardeGlobale {
+export async function creerSauvegardeGlobale(): Promise<SauvegardeGlobale> {
   const donnees: Record<string, unknown> = {};
 
   STORAGE_KEYS_IMPORTANTES.forEach((cle) => {
@@ -47,6 +49,15 @@ export function creerSauvegardeGlobale(): SauvegardeGlobale {
     }
   });
 
+  try {
+    const devisIdb = await lireDevisDepuisIdb();
+    if (devisIdb.length > 0) {
+      donnees['devis-fournisseurs'] = devisIdb;
+    }
+  } catch {
+    // Ne pas bloquer la sauvegarde globale si l'IndexedDB pose problème
+  }
+
   return {
     version: 1,
     dateExport: new Date().toISOString(),
@@ -58,7 +69,7 @@ export function creerSauvegardeGlobale(): SauvegardeGlobale {
  * Restaure une sauvegarde globale dans le localStorage.
  * ATTENTION : cela remplace les données existantes pour les clés concernées.
  */
-export function restaurerSauvegardeGlobale(sauvegarde: SauvegardeGlobale): void {
+export async function restaurerSauvegardeGlobale(sauvegarde: SauvegardeGlobale): Promise<void> {
   if (!sauvegarde || typeof sauvegarde !== 'object') {
     throw new Error('Format de sauvegarde invalide.');
   }
@@ -69,14 +80,20 @@ export function restaurerSauvegardeGlobale(sauvegarde: SauvegardeGlobale): void 
 
   const entrees = Object.entries(sauvegarde.donnees);
 
-  entrees.forEach(([cle, valeur]) => {
+  for (const [cle, valeur] of entrees) {
     try {
+      if (cle === 'devis-fournisseurs') {
+        await ecrireDevisDansIdb(valeur as Devis[]);
+        localStorage.removeItem(cle);
+        continue;
+      }
+
       // Sauvegarder en JSON systématiquement
       localStorage.setItem(cle, JSON.stringify(valeur));
     } catch (error) {
       console.warn(`Erreur lors de la restauration de la clé ${cle}:`, error);
     }
-  });
+  }
 }
 
 

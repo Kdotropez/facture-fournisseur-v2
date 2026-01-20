@@ -34,8 +34,11 @@ function renommerFournisseurDansFactures(ancienNom: Fournisseur, nouveauNom: Fou
 /**
  * Renomme un fournisseur dans tous les devis
  */
-function renommerFournisseurDansDevis(ancienNom: Fournisseur, nouveauNom: Fournisseur): void {
-  const devis = chargerDevis();
+async function renommerFournisseurDansDevis(
+  ancienNom: Fournisseur,
+  nouveauNom: Fournisseur
+): Promise<void> {
+  const devis = await chargerDevis();
   let modifie = false;
 
   const devisModifies = devis.map((d) => {
@@ -47,7 +50,7 @@ function renommerFournisseurDansDevis(ancienNom: Fournisseur, nouveauNom: Fourni
   });
 
   if (modifie) {
-    sauvegarderDevis(devisModifies);
+    await sauvegarderDevis(devisModifies);
   }
 }
 
@@ -100,10 +103,10 @@ function renommerFournisseurPersonnalise(
 /**
  * Renomme un fournisseur partout (factures, devis, références, fournisseurs perso)
  */
-export function renommerFournisseurGlobal(
+export async function renommerFournisseurGlobal(
   ancienNom: Fournisseur,
   nouveauNom: Fournisseur
-): void {
+): Promise<void> {
   if (!nouveauNom.trim() || ancienNom === nouveauNom) {
     return;
   }
@@ -111,7 +114,7 @@ export function renommerFournisseurGlobal(
   const nomNettoye = (nouveauNom.trim() as Fournisseur);
 
   renommerFournisseurDansFactures(ancienNom, nomNettoye);
-  renommerFournisseurDansDevis(ancienNom, nomNettoye);
+  await renommerFournisseurDansDevis(ancienNom, nomNettoye);
   renommerFournisseurDansReferences(ancienNom, nomNettoye);
   renommerFournisseurPersonnalise(ancienNom, nomNettoye);
 }

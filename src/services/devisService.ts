@@ -10,24 +10,39 @@ import type {
   LivraisonDevis,
 } from '../types/devis';
 import type { Facture, Fournisseur, LigneProduit } from '../types/facture';
+import { ecrireDevisDansIdb, lireDevisDepuisIdb } from '../utils/devisStorage';
 
 const STORAGE_KEY_DEVIS = 'devis-fournisseurs';
 
 /**
  * Charge tous les devis depuis le stockage local
  */
-export function chargerDevis(): Devis[] {
+export async function chargerDevis(): Promise<Devis[]> {
   try {
+    const devisIdb = await lireDevisDepuisIdb();
+    if (devisIdb.length > 0) {
+      return devisIdb.map(d => ({
+        ...d,
+        date: new Date(d.date),
+        dateValidite: d.dateValidite ? new Date(d.dateValidite) : undefined,
+        dateImport: new Date(d.dateImport),
+      }));
+    }
+
     const donnees = localStorage.getItem(STORAGE_KEY_DEVIS);
     if (!donnees) return [];
 
     const devis = JSON.parse(donnees) as Devis[];
-    return devis.map(d => ({
+    const devisNormalises = devis.map(d => ({
       ...d,
       date: new Date(d.date),
       dateValidite: d.dateValidite ? new Date(d.dateValidite) : undefined,
       dateImport: new Date(d.dateImport),
     }));
+
+    await ecrireDevisDansIdb(devisNormalises);
+    localStorage.removeItem(STORAGE_KEY_DEVIS);
+    return devisNormalises;
   } catch (error) {
     console.error('Erreur lors du chargement des devis:', error);
     return [];
@@ -37,48 +52,52 @@ export function chargerDevis(): Devis[] {
 /**
  * Sauvegarde tous les devis dans le stockage local
  */
-export function sauvegarderDevis(devis: Devis[]): void {
+export async function sauvegarderDevis(devis: Devis[]): Promise<void> {
   try {
-    localStorage.setItem(STORAGE_KEY_DEVIS, JSON.stringify(devis));
+    await ecrireDevisDansIdb(devis);
   } catch (error) {
     console.error('Erreur lors de la sauvegarde des devis:', error);
     throw error;
   }
 }
 
-export function ajouterDevis(devis: Devis): void {
-  const tous = chargerDevis();
+export async function ajouterDevis(devis: Devis): Promise<void> {
+  const tous = await chargerDevis();
   tous.push(devis);
-  sauvegarderDevis(tous);
+  await sauvegarderDevis(tous);
 }
 
-export function supprimerDevis(id: string): void {
-  const tous = chargerDevis();
+export async function supprimerDevis(id: string): Promise<void> {
+  const tous = await chargerDevis();
   const filtres = tous.filter(d => d.id !== id);
-  sauvegarderDevis(filtres);
+  await sauvegarderDevis(filtres);
 }
 
-export function mettreAJourDevis(devis: Devis): void {
-  const tous = chargerDevis();
+export async function mettreAJourDevis(devis: Devis): Promise<void> {
+  const tous = await chargerDevis();
   const index = tous.findIndex(d => d.id === devis.id);
   if (index !== -1) {
     tous[index] = devis;
-    sauvegarderDevis(tous);
+    await sauvegarderDevis(tous);
   }
 }
 
-export function obtenirDevis(id: string): Devis | undefined {
-  return chargerDevis().find(d => d.id === id);
+export async function obtenirDevis(id: string): Promise<Devis | undefined> {
+  const devis = await chargerDevis();
+  return devis.find(d => d.id === id);
 }
 
 /** Ajoute une livraison à un devis et retourne le devis mis à jour */
-export function ajouterLivraisonAuDevis(devis: Devis, livraison: LivraisonDevis): Devis {
+export async function ajouterLivraisonAuDevis(
+  devis: Devis,
+  livraison: LivraisonDevis
+): Promise<Devis> {
   const livraisons = [...(devis.livraisons || []), livraison];
   const devisMisAJour: Devis = {
     ...devis,
     livraisons,
   };
-  mettreAJourDevis(devisMisAJour);
+  await mettreAJourDevis(devisMisAJour);
   return devisMisAJour;
 }
 
