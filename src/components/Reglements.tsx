@@ -104,13 +104,34 @@ export function Reglements({ factures }: ReglementsProps) {
     });
   }, [reglements, exerciceFiltre]);
 
-  // Calculer les statistiques
-  const statistiques = useMemo(() => {
-    return calculerStatistiquesReglements(
-      facturesFiltrees,
-      exerciceFiltre ? reglementsExercice : undefined
-    );
-  }, [facturesFiltrees, reglementsExercice, exerciceFiltre]);
+  const formaterMontant = (montant: number) => {
+    return new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: 'EUR',
+    }).format(montant);
+  };
+
+  const formaterDate = (date: Date) => {
+    return new Intl.DateTimeFormat('fr-FR', {
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric',
+    }).format(date);
+  };
+
+  const factureDansExercice = (facture: Facture, exercice: string): boolean => {
+    const reglementsFacture = reglements.filter(r => r.factureId === facture.id);
+    if (reglementsFacture.length > 0) {
+      return reglementsFacture.some(r => {
+        const exerciceReglement = obtenirExerciceFiscal(new Date(r.dateReglement));
+        return exerciceReglement === exercice;
+      });
+    }
+
+    const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+    const exerciceFacture = obtenirExerciceFiscal(dateFacture);
+    return exerciceFacture === exercice;
+  };
 
   // Filtrer les factures
   const facturesFiltrees = useMemo(() => {
@@ -141,39 +162,53 @@ export function Reglements({ factures }: ReglementsProps) {
     });
   }, [factures, factureFiltre, fournisseurFiltre, statutFiltre, exerciceFiltre, etatsReglements, reglements]);
 
-  const formaterMontant = (montant: number) => {
-    return new Intl.NumberFormat('fr-FR', {
-      style: 'currency',
-      currency: 'EUR',
-    }).format(montant);
-  };
-
-  const formaterDate = (date: Date) => {
-    return new Intl.DateTimeFormat('fr-FR', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    }).format(date);
-  };
-
-  const factureDansExercice = (facture: Facture, exercice: string): boolean => {
-    const reglementsFacture = reglements.filter(r => r.factureId === facture.id);
-    if (reglementsFacture.length > 0) {
-      return reglementsFacture.some(r => {
-        const exerciceReglement = obtenirExerciceFiscal(new Date(r.dateReglement));
-        return exerciceReglement === exercice;
-      });
-    }
-
-    const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
-    const exerciceFacture = obtenirExerciceFiscal(dateFacture);
-    return exerciceFacture === exercice;
-  };
+  // Calculer les statistiques
+  const statistiques = useMemo(() => {
+    return calculerStatistiquesReglements(
+      facturesFiltrees,
+      exerciceFiltre ? reglementsExercice : undefined
+    );
+  }, [facturesFiltrees, reglementsExercice, exerciceFiltre]);
 
   const handleAjouterReglement = () => {
     setReglementEdite(null);
     setFacturePourNouveauReglement(null);
     setAfficherModal(true);
+  };
+
+  const handleRecalerReglementsRapides = () => {
+    const facturesMap = new Map(factures.map(f => [f.id, f]));
+    const reglementsARecaler = reglements.filter((r) => {
+      if (r.statut !== 'paye') return false;
+      if (r.type !== 'reglement_complet') return false;
+      const facture = facturesMap.get(r.factureId);
+      if (!facture) return false;
+      const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+      const dateReglement = r.dateReglement instanceof Date ? r.dateReglement : new Date(r.dateReglement);
+      const montantOk = Math.abs(r.montant - facture.totalTTC) < 0.01;
+      return montantOk && dateReglement.getTime() > dateFacture.getTime();
+    });
+
+    if (reglementsARecaler.length === 0) {
+      alert('Aucun règlement rapide à recaler.');
+      return;
+    }
+
+    const confirmer = window.confirm(
+      `Recaler ${reglementsARecaler.length} règlement(s) sur la date de facture ?`
+    );
+    if (!confirmer) return;
+
+    reglementsARecaler.forEach((reglement) => {
+      const facture = facturesMap.get(reglement.factureId);
+      if (!facture) return;
+      const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+      mettreAJourReglement(reglement.id, {
+        dateReglement: dateFacture,
+      });
+    });
+
+    setReglements(chargerReglements());
   };
 
   const handleEditerReglement = (reglement: Reglement) => {
@@ -251,7 +286,9 @@ export function Reglements({ factures }: ReglementsProps) {
   };
 
   const handleMarquerRegleRapide = (facture: Facture) => {
-    // Marquer rapidement la facture comme réglée avec virement et date d'aujourd'hui
+    // Marquer rapidement la facture comme réglée avec virement et date de la facture
+    const dateReglementRapide =
+      facture.date instanceof Date ? facture.date : new Date(facture.date);
     const reglementsEnAttente = reglements.filter(
       r => r.factureId === facture.id && r.statut === 'en_attente'
     );
@@ -261,7 +298,7 @@ export function Reglements({ factures }: ReglementsProps) {
       reglementsEnAttente.forEach(reglement => {
         mettreAJourReglement(reglement.id, {
           statut: 'paye',
-          dateReglement: new Date(),
+          dateReglement: dateReglementRapide,
           modePaiement: 'virement',
         });
       });
@@ -273,7 +310,7 @@ export function Reglements({ factures }: ReglementsProps) {
         fournisseur: facture.fournisseur,
         type: 'reglement_complet',
         montant: facture.totalTTC,
-        dateReglement: new Date(),
+        dateReglement: dateReglementRapide,
         statut: 'paye',
         modePaiement: 'virement',
       });
@@ -411,10 +448,15 @@ export function Reglements({ factures }: ReglementsProps) {
     <div className="reglements">
       <div className="reglements__header">
         <h1>Règlements des factures</h1>
-        <button className="reglements__btn-add" onClick={handleAjouterReglement}>
-          <Plus size={20} />
-          Ajouter un règlement
-        </button>
+        <div style={{ display: 'flex', gap: '0.75rem' }}>
+          <button className="reglements__btn-add" onClick={handleAjouterReglement}>
+            <Plus size={20} />
+            Ajouter un règlement
+          </button>
+          <button className="reglements__btn-add" onClick={handleRecalerReglementsRapides}>
+            Recaler dates règlement
+          </button>
+        </div>
       </div>
 
       {/* Filtres */}

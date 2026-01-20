@@ -77,7 +77,13 @@ async function telechargerSauvegardeJSON(
         : `${baseNom}-auto.json`;
 
     const blob = new Blob([donnees], { type: 'application/json' });
-    const sauvegardeOk = await essayerSauvegardeDansDossier(blob, nomFichier);
+    let sauvegardeOk = false;
+    try {
+      sauvegardeOk = await essayerSauvegardeDansDossier(blob, nomFichier);
+    } catch (error) {
+      console.warn('[Sauvegarde] Dossier de sauvegarde indisponible:', error);
+      sauvegardeOk = false;
+    }
 
     if (!sauvegardeOk) {
       const url = URL.createObjectURL(blob);
@@ -108,6 +114,7 @@ function App() {
   const [fichierDevisEnAttente, setFichierDevisEnAttente] = useState<File | null>(null);
   const [fournisseurManuelDevis, setFournisseurManuelDevis] = useState<string>('');
   const [nouveauFournisseurDevis, setNouveauFournisseurDevis] = useState<string>('');
+  const [messageSauvegarde, setMessageSauvegarde] = useState<string>('');
 
   const {
     toutesLesFactures,
@@ -171,11 +178,17 @@ function App() {
         };
 
         // Stocker aussi la sauvegarde complète dans le localStorage
-        localStorage.setItem('auto-backup-dernier-contenu', JSON.stringify(sauvegardeComplete));
-        localStorage.setItem(cleDerniereSauvegarde, String(maintenant));
+        try {
+          localStorage.setItem('auto-backup-dernier-contenu', JSON.stringify(sauvegardeComplete));
+          localStorage.setItem(cleDerniereSauvegarde, String(maintenant));
+        } catch (storageError) {
+          console.warn('[Sauvegarde] Impossible de stocker la sauvegarde en localStorage:', storageError);
+        }
 
         // Télécharger automatiquement un fichier JSON sur le disque (dossier Téléchargements)
         void telechargerSauvegardeJSON(sauvegardeComplete, 'auto');
+        setMessageSauvegarde('Sauvegarde automatique effectuée.');
+        setTimeout(() => setMessageSauvegarde(''), 4000);
 
         // Essayer d'envoyer la sauvegarde vers Google Drive, sans bloquer l'UI
         (async () => {
@@ -543,6 +556,8 @@ function App() {
       };
 
       await telechargerSauvegardeJSON(sauvegardeComplete, 'complet');
+      setMessageSauvegarde('Export global terminé.');
+      setTimeout(() => setMessageSauvegarde(''), 5000);
 
       // Export automatique vers Google Drive si configuré
       try {
@@ -820,6 +835,11 @@ function App() {
               onChange={handleRestaurerChange}
             />
           </div>
+          {messageSauvegarde && (
+            <div style={{ color: '#059669', fontWeight: 600, fontSize: '0.9rem' }}>
+              {messageSauvegarde}
+            </div>
+          )}
         </div>
       </header>
 

@@ -47,7 +47,7 @@ interface ProduitStatsDetail {
 type FournisseurProduits = Record<string, ProduitStatsDetail>;
 
 type SensTri = 'asc' | 'desc';
-type ColonneFournisseur = 'nom' | 'factures' | 'ht' | 'tva' | 'ttc';
+type ColonneFournisseur = 'nom' | 'factures' | 'produits' | 'quantite' | 'ht' | 'tva' | 'ttc';
 type ColonneProduit = 'ref' | 'description' | 'logo' | 'couleur' | 'quantite' | 'montant' | 'dernier';
 type ColonneDetail = 'facture' | 'date' | 'quantite' | 'montant';
 
@@ -80,9 +80,17 @@ export function StatistiquesComponent({
       year: 'numeric',
     }).format(date);
 
+  const obtenirExerciceFiscal = (date: Date): string => {
+    const mois = date.getMonth(); // 0-11
+    const annee = date.getFullYear();
+    const anneeDebut = mois >= 11 ? annee : annee - 1; // exercice du 1er déc au 30 nov
+    return `${anneeDebut}/${anneeDebut + 1}`;
+  };
+
   const [filtreDateDebut, setFiltreDateDebut] = useState('');
   const [filtreDateFin, setFiltreDateFin] = useState('');
   const [filtreRecherche, setFiltreRecherche] = useState('');
+  const [exerciceFiltre, setExerciceFiltre] = useState('');
 
   const [triFournisseur, setTriFournisseur] = useState<{ colonne: ColonneFournisseur; sens: SensTri }>({
     colonne: 'ht',
@@ -123,6 +131,15 @@ export function StatistiquesComponent({
     }
   }, [traductions]);
 
+  const exercicesDisponibles = useMemo(() => {
+    const exercices = new Set<string>();
+    factures.forEach((facture) => {
+      const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+      exercices.add(obtenirExerciceFiscal(dateFacture));
+    });
+    return Array.from(exercices).sort((a, b) => b.localeCompare(a, 'fr'));
+  }, [factures]);
+
   const facturesFiltrees = useMemo<FactureFiltrée[]>(() => {
     const debut = filtreDateDebut ? new Date(`${filtreDateDebut}T00:00:00`) : null;
     const fin = filtreDateFin ? new Date(`${filtreDateFin}T23:59:59`) : null;
@@ -130,6 +147,10 @@ export function StatistiquesComponent({
 
     return factures.reduce<FactureFiltrée[]>((acc, facture) => {
       const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+      if (exerciceFiltre) {
+        const exercice = obtenirExerciceFiscal(dateFacture);
+        if (exercice !== exerciceFiltre) return acc;
+      }
       if (debut && dateFacture < debut) return acc;
       if (fin && dateFacture > fin) return acc;
 
@@ -156,7 +177,7 @@ export function StatistiquesComponent({
       });
       return acc;
     }, []);
-  }, [factures, filtreDateDebut, filtreDateFin, filtreRecherche]);
+  }, [factures, filtreDateDebut, filtreDateFin, filtreRecherche, exerciceFiltre]);
 
   const statistiquesFiltrees = useMemo<Statistiques>(() => {
     const base: Statistiques = {
@@ -206,9 +227,11 @@ export function StatistiquesComponent({
       }
       const produits = result[fournisseurCanonique];
 
-      lignes.forEach((ligne) => {
-        if (!ligne.refFournisseur) return;
-        const ref = ligne.refFournisseur;
+      lignes.forEach((ligne, index) => {
+        const ref =
+          ligne.refFournisseur?.trim() ||
+          ligne.description?.trim() ||
+          `LIGNE-${facture.id}-${index}`;
         if (!produits[ref]) {
           produits[ref] = {
             ref,
@@ -232,14 +255,14 @@ export function StatistiquesComponent({
           detail.couleurs.add(ligne.couleur);
         }
 
-        detail.quantiteTotale += ligne.quantite;
-        detail.montantHTTotal += ligne.montantHT;
+        detail.quantiteTotale += typeof ligne.quantite === 'number' ? ligne.quantite : 0;
+        detail.montantHTTotal += typeof ligne.montantHT === 'number' ? ligne.montantHT : 0;
         detail.lignes.push({
           id: facture.id,
           numero: facture.numero,
           date: facture.date instanceof Date ? facture.date : new Date(facture.date),
-          quantite: ligne.quantite,
-          montantHT: ligne.montantHT,
+          quantite: typeof ligne.quantite === 'number' ? ligne.quantite : 0,
+          montantHT: typeof ligne.montantHT === 'number' ? ligne.montantHT : 0,
           description: ligne.description,
           couleur: ligne.couleur,
         });
@@ -248,6 +271,16 @@ export function StatistiquesComponent({
 
     return result;
   }, [facturesFiltrees]);
+
+  const quantitesParFournisseur = useMemo(() => {
+    const result: Record<string, { produits: number; quantite: number }> = {};
+    Object.entries(detailsParFournisseur).forEach(([fournisseur, produits]) => {
+      const liste = Object.values(produits);
+      const quantite = liste.reduce((sum, p) => sum + p.quantiteTotale, 0);
+      result[fournisseur] = { produits: liste.length, quantite };
+    });
+    return result;
+  }, [detailsParFournisseur]);
 
   const fournisseursStats = useMemo(() => {
     return (Object.entries(statistiquesFiltrees.parFournisseur) as Array<
@@ -268,6 +301,10 @@ export function StatistiquesComponent({
             return nom;
           case 'factures':
             return stats.nombre;
+          case 'produits':
+            return quantitesParFournisseur[nom]?.produits ?? 0;
+          case 'quantite':
+            return quantitesParFournisseur[nom]?.quantite ?? 0;
           case 'ht':
             return stats.totalHT;
           case 'tva':
@@ -289,7 +326,7 @@ export function StatistiquesComponent({
       return ((valeurA as number) - (valeurB as number)) * sens;
     });
     return copie;
-  }, [fournisseursStats, triFournisseur]);
+  }, [fournisseursStats, triFournisseur, quantitesParFournisseur]);
 
   useEffect(() => {
     if (!fournisseurSelectionne || !fournisseursTries.some(([nom]) => nom === fournisseurSelectionne)) {
@@ -471,6 +508,17 @@ export function StatistiquesComponent({
             Date fin
             <input type="date" value={filtreDateFin} onChange={(e) => setFiltreDateFin(e.target.value)} />
           </label>
+          <label>
+            Exercice fiscal
+            <select value={exerciceFiltre} onChange={(e) => setExerciceFiltre(e.target.value)}>
+              <option value="">Tous</option>
+              {exercicesDisponibles.map((exercice) => (
+                <option key={exercice} value={exercice}>
+                  {exercice}
+                </option>
+              ))}
+            </select>
+          </label>
         </div>
         <div className="statistiques__filters-group">
           <label>
@@ -497,6 +545,9 @@ export function StatistiquesComponent({
               <List size={18} />
               <span>Fournisseurs</span>
             </div>
+            <p style={{ margin: '0.75rem 0 0', color: '#6b7280', fontSize: '0.85rem' }}>
+              Cliquez sur un fournisseur pour afficher ses produits.
+            </p>
             <table className="statistiques__table">
               <thead>
                 <tr>
@@ -505,6 +556,12 @@ export function StatistiquesComponent({
                   </th>
                   <th onClick={() => changerTri(triFournisseur, 'factures', setTriFournisseur)}>
                     Factures {renderTri(triFournisseur, 'factures')}
+                  </th>
+                  <th onClick={() => changerTri(triFournisseur, 'produits', setTriFournisseur)}>
+                    Produits {renderTri(triFournisseur, 'produits')}
+                  </th>
+                  <th onClick={() => changerTri(triFournisseur, 'quantite', setTriFournisseur)}>
+                    Qtés {renderTri(triFournisseur, 'quantite')}
                   </th>
                   <th onClick={() => changerTri(triFournisseur, 'ht', setTriFournisseur)}>
                     Total HT {renderTri(triFournisseur, 'ht')}
@@ -532,6 +589,8 @@ export function StatistiquesComponent({
                   >
                     <td>{fournisseur}</td>
                     <td>{stats.nombre}</td>
+                    <td>{quantitesParFournisseur[fournisseur]?.produits ?? 0}</td>
+                    <td>{quantitesParFournisseur[fournisseur]?.quantite ?? 0}</td>
                     <td>{formaterMontant(stats.totalHT)}</td>
                     <td>{formaterMontant(stats.totalTVA)}</td>
                     <td>{formaterMontant(stats.totalTTC)}</td>
@@ -553,7 +612,7 @@ export function StatistiquesComponent({
                 ))}
                 {fournisseursTries.length === 0 && (
                   <tr>
-                    <td colSpan={6} className="statistiques__empty">
+                    <td colSpan={8} className="statistiques__empty">
                       Aucune facture ne correspond aux critères.
                     </td>
                   </tr>
