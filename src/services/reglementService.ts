@@ -216,13 +216,15 @@ export function supprimerReglementParId(id: string): boolean {
  * Détecte les doublons dans les règlements d'une facture
  * Retourne les règlements qui sont en doublon (montant total payé > total TTC)
  */
-export function detecterDoublons(facture: Facture): {
+export function detecterDoublons(facture: Facture, reglementsOverride?: Reglement[]): {
   aDoublons: boolean;
   montantRegleBrut: number;
   montantRegleValide: number;
   reglementsEnDoublon: Reglement[];
 } {
-  const reglements = obtenirReglementsFacture(facture.id);
+  const reglements = reglementsOverride
+    ? reglementsOverride.filter(r => r.factureId === facture.id)
+    : obtenirReglementsFacture(facture.id);
   const totalTTC = typeof facture.totalTTC === 'number' && !isNaN(facture.totalTTC) 
     ? facture.totalTTC 
     : 0;
@@ -269,8 +271,13 @@ export function detecterDoublons(facture: Facture): {
  * Calcule l'état de règlement d'une facture
  * Version refondue avec détection automatique des doublons
  */
-export function calculerEtatReglement(facture: Facture): EtatReglementFacture {
-  const reglements = obtenirReglementsFacture(facture.id);
+export function calculerEtatReglement(
+  facture: Facture,
+  reglementsOverride?: Reglement[]
+): EtatReglementFacture {
+  const reglements = reglementsOverride
+    ? reglementsOverride.filter(r => r.factureId === facture.id)
+    : obtenirReglementsFacture(facture.id);
   
   // S'assurer que facture.totalTTC est un nombre valide
   const totalTTC = typeof facture.totalTTC === 'number' && !isNaN(facture.totalTTC) 
@@ -278,7 +285,7 @@ export function calculerEtatReglement(facture: Facture): EtatReglementFacture {
     : 0;
   
   // Détecter les doublons
-  const detectionDoublons = detecterDoublons(facture);
+  const detectionDoublons = detecterDoublons(facture, reglements);
   
   // Montant réglé : utiliser le montant valide (limité au total TTC)
   const montantRegle = detectionDoublons.montantRegleValide;
@@ -589,11 +596,14 @@ export function sauvegarderReglePaiement(regle: ReglePaiementFournisseur): void 
  * Calcule les statistiques de règlements
  * Version refondue avec détection des doublons
  */
-export function calculerStatistiquesReglements(factures: Facture[]): StatistiquesReglements {
-  const reglements = chargerReglements();
+export function calculerStatistiquesReglements(
+  factures: Facture[],
+  reglementsOverride?: Reglement[]
+): StatistiquesReglements {
+  const reglements = reglementsOverride ?? chargerReglements();
   const reglementsPayes = reglements.filter(r => r.statut === 'paye');
   
-  const etats = factures.map(f => calculerEtatReglement(f));
+  const etats = factures.map(f => calculerEtatReglement(f, reglements));
   
   // Compter les factures par statut (en excluant les "depasse" qui sont des doublons)
   const facturesReglees = etats.filter(e => e.statut === 'regle').length;

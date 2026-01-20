@@ -83,6 +83,10 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
 
   const totalLivraisonsTTC = comparaison.totalLivraisonsTTC;
   const resteALivrerTTC = comparaison.resteALivrerTTC;
+  const acompteDemandeTTC =
+    typeof devis.acompteDemandeTTC === 'number' ? devis.acompteDemandeTTC : 0;
+  const baseApresAcompteTTC = Math.max(0, comparaison.totalDevisTTC - acompteDemandeTTC);
+  const resteApresAcompteTTC = baseApresAcompteTTC;
 
   // Total déjà payé sur les factures liées (en TTC), basé sur les règlements
   const totalPayeTTC = comparaison.facturesLiees.reduce((sum, facture) => {
@@ -91,7 +95,8 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
   }, 0);
 
   // Reste à payer TTC sur le devis (indépendant des livraisons)
-  const resteAPayerTTC = Math.max(0, comparaison.totalDevisTTC - totalPayeTTC);
+  const resteAPayerTTC = Math.max(0, baseApresAcompteTTC - totalPayeTTC);
+  const resteALivrerTTCApresAcompte = Math.max(0, baseApresAcompteTTC - totalLivraisonsTTC);
 
   const [lignePourReception, setLignePourReception] = useState<number | null>(null);
   const [dateReception, setDateReception] = useState('');
@@ -407,6 +412,22 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
                 {formaterMontant(comparaison.totalDevisTTC)}
               </span>
             </div>
+            {acompteDemandeTTC > 0 && (
+              <div className="details-facture__total-item">
+                <span className="details-facture__total-label">Acompte demandé TTC</span>
+                <span className="details-facture__total-value">
+                  {formaterMontant(acompteDemandeTTC)}
+                </span>
+              </div>
+            )}
+            {acompteDemandeTTC > 0 && (
+              <div className="details-facture__total-item">
+                <span className="details-facture__total-label">Reste après acompte TTC</span>
+                <span className="details-facture__total-value">
+                  {formaterMontant(resteApresAcompteTTC)}
+                </span>
+              </div>
+            )}
             <div className="details-facture__total-item">
               <span className="details-facture__total-label">Total livraisons TTC</span>
               <span className="details-facture__total-value">
@@ -428,7 +449,7 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
             <div className="details-facture__total-item">
               <span className="details-facture__total-label">Reste à livrer TTC</span>
               <span className="details-facture__total-value">
-                {formaterMontant(resteALivrerTTC)}
+                {formaterMontant(resteALivrerTTCApresAcompte)}
               </span>
             </div>
             <div className="details-facture__total-item details-facture__total-item--final">

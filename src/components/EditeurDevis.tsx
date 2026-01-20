@@ -27,23 +27,58 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
     totalHT: 0,
     totalTVA: 0,
     totalTTC: 0,
+    acompteDemandeTTC: 0,
     dateImport: new Date(),
     statut: 'en_attente',
     facturesLieesIds: [],
   });
 
   const [devis, setDevis] = useState<Devis>(() => devisInitial ?? creerDevisInitial());
+  const [totalTVAInput, setTotalTVAInput] = useState(() =>
+    typeof (devisInitial?.totalTVA) === 'number' ? String(devisInitial.totalTVA) : '0'
+  );
+  const [totalTTCInput, setTotalTTCInput] = useState(() =>
+    typeof (devisInitial?.totalTTC) === 'number' ? String(devisInitial.totalTTC) : '0'
+  );
+  const [acompteDemandeTTCInput, setAcompteDemandeTTCInput] = useState(() =>
+    typeof (devisInitial?.acompteDemandeTTC) === 'number'
+      ? String(devisInitial.acompteDemandeTTC)
+      : '0'
+  );
 
   // Si on reçoit un devis existant à éditer, on le charge dans l'état local
   useEffect(() => {
     if (devisInitial) {
       setDevis(devisInitial);
+      setTotalTVAInput(
+        typeof devisInitial.totalTVA === 'number' ? String(devisInitial.totalTVA) : '0'
+      );
+      setTotalTTCInput(
+        typeof devisInitial.totalTTC === 'number' ? String(devisInitial.totalTTC) : '0'
+      );
+      setAcompteDemandeTTCInput(
+        typeof devisInitial.acompteDemandeTTC === 'number'
+          ? String(devisInitial.acompteDemandeTTC)
+          : '0'
+      );
     }
   }, [devisInitial]);
 
   const handleChange = (field: keyof Devis, value: unknown) => {
     setDevis(prev => ({ ...prev, [field]: value }));
   };
+
+  useEffect(() => {
+    const totalHT = devis.lignes.reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0);
+    const totalTVA = typeof devis.totalTVA === 'number' ? devis.totalTVA : 0;
+    const totalTTC = totalHT + totalTVA;
+
+    if (totalHT !== devis.totalHT || totalTTC !== devis.totalTTC) {
+      setDevis(prev => ({ ...prev, totalHT, totalTTC }));
+    }
+
+    setTotalTTCInput(String(totalTTC));
+  }, [devis.lignes, devis.totalTVA, devis.totalHT, devis.totalTTC]);
 
   const handleChangeLigne = (index: number, field: keyof LigneProduit, value: unknown) => {
     setDevis(prev => {
@@ -91,19 +126,34 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
     return date.toISOString().split('T')[0];
   };
 
+  const normaliserMontant = (valeur: string): number | null => {
+    const nettoyee = valeur.replace(/\s/g, '').replace(',', '.');
+    if (nettoyee === '') return null;
+    const parsed = Number.parseFloat(nettoyee);
+    return Number.isFinite(parsed) ? parsed : null;
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
+    const totalTVAParse = normaliserMontant(totalTVAInput);
+    const totalTTCParse = normaliserMontant(totalTTCInput);
+    const acompteDemandeParse = normaliserMontant(acompteDemandeTTCInput);
+    const totalTVAFinal = totalTVAParse ?? 0;
+    const totalTTCFinal = totalTTCParse ?? 0;
+    const acompteDemandeFinal = acompteDemandeParse ?? 0;
+
     // Recalculer les totaux à partir des lignes
     const totalHT = devis.lignes.reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0);
-    const totalTVA = devis.totalTVA; // tu pourras ajuster la TVA manuellement si besoin
-    const totalTTC = devis.totalTTC || (totalHT + totalTVA);
+    const totalTVA = totalTVAFinal; // tu pourras ajuster la TVA manuellement si besoin
+    const totalTTC = totalTTCFinal || (totalHT + totalTVA);
 
     const devisFinal: Devis = {
       ...devis,
       totalHT,
       totalTVA,
       totalTTC,
+      acompteDemandeTTC: acompteDemandeFinal,
       // Si le devis a déjà une date d'import (cas édition), on la conserve
       dateImport: devis.dateImport ?? new Date(),
     };
@@ -112,7 +162,7 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
   };
 
   return (
-    <div className="details-facture__modal-overlay" onClick={onFermer}>
+    <div className="details-facture__modal-overlay">
       <div className="details-facture__modal" onClick={(e) => e.stopPropagation()}>
         <div className="details-facture__modal-header">
           <h2>{devisInitial ? 'Modifier le devis' : 'Nouveau devis'}</h2>
@@ -340,25 +390,49 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
               <div className="details-facture__modal-field">
                 <label>Total TVA</label>
                 <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={devis.totalTVA.toFixed(2)}
-                  onChange={(e) =>
-                    handleChange('totalTVA', parseFloat(e.target.value) || 0)
-                  }
+                  type="text"
+                  inputMode="decimal"
+                  value={totalTVAInput}
+                  onChange={(e) => {
+                    const valeur = e.target.value;
+                    setTotalTVAInput(valeur);
+                    const parsed = normaliserMontant(valeur);
+                    if (parsed !== null) {
+                      handleChange('totalTVA', parsed);
+                    }
+                  }}
                 />
               </div>
               <div className="details-facture__modal-field">
                 <label>Total TTC</label>
                 <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={devis.totalTTC.toFixed(2)}
-                  onChange={(e) =>
-                    handleChange('totalTTC', parseFloat(e.target.value) || 0)
-                  }
+                  type="text"
+                  inputMode="decimal"
+                  value={totalTTCInput}
+                  onChange={(e) => {
+                    const valeur = e.target.value;
+                    setTotalTTCInput(valeur);
+                    const parsed = normaliserMontant(valeur);
+                    if (parsed !== null) {
+                      handleChange('totalTTC', parsed);
+                    }
+                  }}
+                />
+              </div>
+              <div className="details-facture__modal-field">
+                <label>Acompte demandé (TTC)</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={acompteDemandeTTCInput}
+                  onChange={(e) => {
+                    const valeur = e.target.value;
+                    setAcompteDemandeTTCInput(valeur);
+                    const parsed = normaliserMontant(valeur);
+                    if (parsed !== null) {
+                      handleChange('acompteDemandeTTC', parsed);
+                    }
+                  }}
                 />
               </div>
             </div>

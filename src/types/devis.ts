@@ -35,6 +35,8 @@ export interface Devis {
   totalTVA: number;
   /** Total TTC prévu */
   totalTTC: number;
+  /** Acompte demandé par le fournisseur (TTC) */
+  acompteDemandeTTC?: number;
   /** Date d'import */
   dateImport: Date;
   /** Statut du devis dans le cycle de vie */

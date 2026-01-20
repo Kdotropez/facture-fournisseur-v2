@@ -43,13 +43,22 @@ interface ReglementsProps {
   factures: Facture[];
 }
 
+const obtenirExerciceFiscal = (date: Date): string => {
+  const mois = date.getMonth(); // 0-11
+  const annee = date.getFullYear();
+  const anneeDebut = mois >= 11 ? annee : annee - 1; // exercice du 1er déc au 30 nov
+  return `${anneeDebut}/${anneeDebut + 1}`;
+};
+
 export function Reglements({ factures }: ReglementsProps) {
   const [reglements, setReglements] = useState<Reglement[]>([]);
   const [factureFiltre, setFactureFiltre] = useState<string>('');
   const [fournisseurFiltre, setFournisseurFiltre] = useState<string>('');
   const [statutFiltre, setStatutFiltre] = useState<StatutReglement | ''>('');
+  const [exerciceFiltre, setExerciceFiltre] = useState<string>('');
   const [afficherModal, setAfficherModal] = useState(false);
   const [reglementEdite, setReglementEdite] = useState<Reglement | null>(null);
+  const [facturePourNouveauReglement, setFacturePourNouveauReglement] = useState<Facture | null>(null);
   const [afficherModalAcomptes, setAfficherModalAcomptes] = useState(false);
   const [facturePourAcomptes, setFacturePourAcomptes] = useState<Facture | null>(null);
   const [facturesDeveloppees, setFacturesDeveloppees] = useState<Set<string>>(new Set());
@@ -63,6 +72,21 @@ export function Reglements({ factures }: ReglementsProps) {
     setReglements(reglementsCharges);
   }, []);
 
+  useEffect(() => {
+    const exerciceMemo = localStorage.getItem('reglements-filtre-exercice');
+    if (exerciceMemo) {
+      setExerciceFiltre(exerciceMemo);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (exerciceFiltre) {
+      localStorage.setItem('reglements-filtre-exercice', exerciceFiltre);
+    } else {
+      localStorage.removeItem('reglements-filtre-exercice');
+    }
+  }, [exerciceFiltre]);
+
   // Calculer les états de règlement pour chaque facture
   const etatsReglements = useMemo(() => {
     const etats: Record<string, EtatReglementFacture> = {};
@@ -72,10 +96,24 @@ export function Reglements({ factures }: ReglementsProps) {
     return etats;
   }, [factures, reglements]);
 
+  const reglementsExercice = useMemo(() => {
+    if (!exerciceFiltre) return reglements;
+    return reglements.filter(r => {
+      const exercice = obtenirExerciceFiscal(new Date(r.dateReglement));
+      return exercice === exerciceFiltre;
+    });
+  }, [reglements, exerciceFiltre]);
+
+  const facturesPourStats = useMemo(() => {
+    if (!exerciceFiltre) return factures;
+    const idsFactures = new Set(reglementsExercice.map(r => r.factureId));
+    return factures.filter(f => idsFactures.has(f.id));
+  }, [factures, exerciceFiltre, reglementsExercice]);
+
   // Calculer les statistiques
   const statistiques = useMemo(() => {
-    return calculerStatistiquesReglements(factures);
-  }, [factures, reglements]);
+    return calculerStatistiquesReglements(facturesPourStats, exerciceFiltre ? reglementsExercice : undefined);
+  }, [facturesPourStats, reglementsExercice, exerciceFiltre]);
 
   // Filtrer les factures
   const facturesFiltrees = useMemo(() => {
@@ -98,9 +136,18 @@ export function Reglements({ factures }: ReglementsProps) {
         return false;
       }
 
+      if (exerciceFiltre) {
+        const aDesReglementsDansExercice = reglements.some(r => {
+          if (r.factureId !== facture.id) return false;
+          const exercice = obtenirExerciceFiscal(new Date(r.dateReglement));
+          return exercice === exerciceFiltre;
+        });
+        if (!aDesReglementsDansExercice) return false;
+      }
+
       return true;
     });
-  }, [factures, factureFiltre, fournisseurFiltre, statutFiltre, etatsReglements]);
+  }, [factures, factureFiltre, fournisseurFiltre, statutFiltre, exerciceFiltre, etatsReglements, reglements]);
 
   const formaterMontant = (montant: number) => {
     return new Intl.NumberFormat('fr-FR', {
@@ -119,11 +166,19 @@ export function Reglements({ factures }: ReglementsProps) {
 
   const handleAjouterReglement = () => {
     setReglementEdite(null);
+    setFacturePourNouveauReglement(null);
     setAfficherModal(true);
   };
 
   const handleEditerReglement = (reglement: Reglement) => {
     setReglementEdite(reglement);
+    setFacturePourNouveauReglement(null);
+    setAfficherModal(true);
+  };
+
+  const handleAjouterReglementPourFacture = (facture: Facture) => {
+    setReglementEdite(null);
+    setFacturePourNouveauReglement(facture);
     setAfficherModal(true);
   };
 
@@ -143,6 +198,7 @@ export function Reglements({ factures }: ReglementsProps) {
     setReglements(chargerReglements());
     setAfficherModal(false);
     setReglementEdite(null);
+    setFacturePourNouveauReglement(null);
   };
 
   const handleCreerAcomptes = (facture: Facture) => {
@@ -257,15 +313,31 @@ export function Reglements({ factures }: ReglementsProps) {
     return Array.from(new Set(factures.map(f => f.fournisseur)));
   }, [factures]);
 
+  const exercicesDisponibles = useMemo(() => {
+    const exercices = new Set<string>();
+    reglements.forEach(r => {
+      exercices.add(obtenirExerciceFiscal(new Date(r.dateReglement)));
+    });
+    factures.forEach(f => {
+      const dateFacture = f.date instanceof Date ? f.date : new Date(f.date);
+      exercices.add(obtenirExerciceFiscal(dateFacture));
+    });
+    return Array.from(exercices).sort((a, b) => b.localeCompare(a, 'fr'));
+  }, [reglements, factures]);
+
   // Règlements filtrés pour le journal en fonction des filtres actuels
   const reglementsFiltresJournal = useMemo(() => {
     const idsFacturesFiltrees = new Set(facturesFiltrees.map(f => f.id));
     return reglements.filter(r => {
       if (!idsFacturesFiltrees.has(r.factureId)) return false;
       if (statutFiltre && r.statut !== statutFiltre) return false;
+      if (exerciceFiltre) {
+        const exercice = obtenirExerciceFiscal(new Date(r.dateReglement));
+        if (exercice !== exerciceFiltre) return false;
+      }
       return true;
     });
-  }, [reglements, facturesFiltrees, statutFiltre]);
+  }, [reglements, facturesFiltrees, statutFiltre, exerciceFiltre]);
 
   const journalReglementsIndividuels = useMemo(() => {
     return [...reglementsFiltresJournal].sort((a, b) => {
@@ -337,6 +409,58 @@ export function Reglements({ factures }: ReglementsProps) {
           <Plus size={20} />
           Ajouter un règlement
         </button>
+      </div>
+
+      {/* Filtres */}
+      <div className="reglements__filtres">
+        <div className="reglements__filtre">
+          <label>Rechercher une facture</label>
+          <input
+            type="text"
+            placeholder="Numéro de facture..."
+            value={factureFiltre}
+            onChange={(e) => setFactureFiltre(e.target.value)}
+          />
+        </div>
+        <div className="reglements__filtre">
+          <label>Fournisseur</label>
+          <select
+            value={fournisseurFiltre}
+            onChange={(e) => setFournisseurFiltre(e.target.value)}
+          >
+            <option value="">Tous</option>
+            {fournisseurs.map(f => (
+              <option key={f} value={f}>{f}</option>
+            ))}
+          </select>
+        </div>
+        <div className="reglements__filtre">
+          <label>Statut</label>
+          <select
+            value={statutFiltre}
+            onChange={(e) => setStatutFiltre(e.target.value as StatutReglement | '')}
+          >
+            <option value="">Tous</option>
+            <option value="paye">Payé</option>
+            <option value="partiel">Partiel</option>
+            <option value="en_attente">En attente</option>
+            <option value="non_regle">Non réglé</option>
+          </select>
+        </div>
+        <div className="reglements__filtre">
+          <label>Exercice fiscal</label>
+          <select
+            value={exerciceFiltre}
+            onChange={(e) => setExerciceFiltre(e.target.value)}
+          >
+            <option value="">Tous</option>
+            {exercicesDisponibles.map((annee) => (
+              <option key={annee} value={String(annee)}>
+                {annee}
+              </option>
+            ))}
+          </select>
+        </div>
       </div>
 
       {/* Section Statistiques */}
@@ -414,51 +538,18 @@ export function Reglements({ factures }: ReglementsProps) {
         </div>
       )}
 
-      {/* Filtres */}
-      <div className="reglements__filtres">
-        <div className="reglements__filtre">
-          <label>Rechercher une facture</label>
-          <input
-            type="text"
-            placeholder="Numéro de facture..."
-            value={factureFiltre}
-            onChange={(e) => setFactureFiltre(e.target.value)}
-          />
-        </div>
-        <div className="reglements__filtre">
-          <label>Fournisseur</label>
-          <select
-            value={fournisseurFiltre}
-            onChange={(e) => setFournisseurFiltre(e.target.value)}
-          >
-            <option value="">Tous</option>
-            {fournisseurs.map(f => (
-              <option key={f} value={f}>{f}</option>
-            ))}
-          </select>
-        </div>
-        <div className="reglements__filtre">
-          <label>Statut</label>
-          <select
-            value={statutFiltre}
-            onChange={(e) => setStatutFiltre(e.target.value as StatutReglement | '')}
-          >
-            <option value="">Tous</option>
-            <option value="paye">Payé</option>
-            <option value="partiel">Partiel</option>
-            <option value="en_attente">En attente</option>
-            <option value="non_regle">Non réglé</option>
-          </select>
-        </div>
-      </div>
-
       {/* Liste des factures avec leurs règlements */}
       <div className="reglements__liste">
         {facturesFiltrees.map(facture => {
           const etat = etatsReglements[facture.id];
           if (!etat) return null;
 
-          const reglementsFacture = reglements.filter(r => r.factureId === facture.id);
+          const reglementsFacture = reglements.filter(r => {
+            if (r.factureId !== facture.id) return false;
+            if (!exerciceFiltre) return true;
+            const exercice = obtenirExerciceFiscal(new Date(r.dateReglement));
+            return exercice === exerciceFiltre;
+          });
           const regle = obtenirReglePaiement(facture.fournisseur);
           const estDeveloppee = facturesDeveloppees.has(facture.id);
           
@@ -526,6 +617,17 @@ export function Reglements({ factures }: ReglementsProps) {
                       </div>
                     </div>
                     <div className="reglements__facture-actions">
+                      <button
+                        className="reglements__btn-add"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleAjouterReglementPourFacture(facture);
+                        }}
+                        title="Ajouter un règlement pour cette facture"
+                      >
+                        <Plus size={16} />
+                        Ajouter un règlement
+                      </button>
                       {etat.statut !== 'regle' && reglementsFacture.length > 0 && (
                         <>
                           <button
@@ -944,10 +1046,13 @@ export function Reglements({ factures }: ReglementsProps) {
           factures={factures}
           etatsReglements={etatsReglements}
           reglement={reglementEdite}
+          facturePreselectionneeId={facturePourNouveauReglement?.id}
+          exerciceFiltre={exerciceFiltre}
           onSauvegarder={handleSauvegarderReglement}
           onFermer={() => {
             setAfficherModal(false);
             setReglementEdite(null);
+            setFacturePourNouveauReglement(null);
           }}
         />
       )}
@@ -1057,11 +1162,21 @@ interface ModalReglementProps {
   factures: Facture[];
   etatsReglements: Record<string, EtatReglementFacture>;
   reglement: Reglement | null;
+  facturePreselectionneeId?: string;
+  exerciceFiltre?: string;
   onSauvegarder: (reglement: Omit<Reglement, 'id' | 'dateCreation' | 'dateModification'>) => void;
   onFermer: () => void;
 }
 
-function ModalReglement({ factures, etatsReglements, reglement, onSauvegarder, onFermer }: ModalReglementProps) {
+function ModalReglement({
+  factures,
+  etatsReglements,
+  reglement,
+  facturePreselectionneeId,
+  exerciceFiltre,
+  onSauvegarder,
+  onFermer,
+}: ModalReglementProps) {
   const formaterMontant = (montant: number) => {
     return new Intl.NumberFormat('fr-FR', {
       style: 'currency',
@@ -1069,7 +1184,7 @@ function ModalReglement({ factures, etatsReglements, reglement, onSauvegarder, o
     }).format(montant);
   };
 
-  const [factureId, setFactureId] = useState(reglement?.factureId || '');
+  const [factureId, setFactureId] = useState(reglement?.factureId || facturePreselectionneeId || '');
   const [type, setType] = useState<TypeReglement>(reglement?.type || 'reglement_complet');
   // Formater le montant à 2 décimales lors de l'initialisation
   const montantInitial = reglement?.montant 
@@ -1087,6 +1202,12 @@ function ModalReglement({ factures, etatsReglements, reglement, onSauvegarder, o
   const [referencePaiement, setReferencePaiement] = useState(reglement?.referencePaiement || '');
   const [notes, setNotes] = useState(reglement?.notes || '');
 
+  useEffect(() => {
+    if (!reglement && facturePreselectionneeId) {
+      setFactureId(facturePreselectionneeId);
+    }
+  }, [reglement, facturePreselectionneeId]);
+
   // Ne proposer dans la liste que les factures avec un montant restant à régler
   const facturesAvecMontantRestant = useMemo(() => {
     return factures
@@ -1095,8 +1216,12 @@ function ModalReglement({ factures, etatsReglements, reglement, onSauvegarder, o
         const montantRestant = etat ? etat.montantRestant : f.totalTTC;
         return { facture: f, montantRestant };
       })
-      .filter(({ montantRestant }) => montantRestant > 0.01);
-  }, [factures, etatsReglements]);
+      .filter(({ facture, montantRestant }) => {
+        if (montantRestant <= 0.01) return false;
+        if (!exerciceFiltre) return true;
+        return obtenirExerciceFiscal(new Date(facture.date)) === exerciceFiltre;
+      });
+  }, [factures, etatsReglements, exerciceFiltre]);
 
   const factureSelectionnee = facturesAvecMontantRestant.find(f => f.facture.id === factureId)?.facture;
 

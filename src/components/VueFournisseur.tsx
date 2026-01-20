@@ -4,7 +4,7 @@
  */
 
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { Building2, FileText, Euro, Calendar, TrendingUp, X, Filter, CheckSquare, Square, Plus, CreditCard, ArrowUp, ArrowDown, ArrowUpDown, Trash2 } from 'lucide-react';
+import { Building2, FileText, Euro, Calendar, TrendingUp, X, Filter, CheckSquare, Square, Plus, CreditCard, ArrowUp, ArrowDown, ArrowUpDown, Trash2, CheckCircle } from 'lucide-react';
 import type { Facture, Fournisseur } from '../types/facture';
 import { 
   calculerEtatReglement, 
@@ -395,6 +395,38 @@ export function VueFournisseur({
     setForceUpdate(prev => prev + 1);
   };
 
+  const handleReglerFactureRapide = (facture: Facture) => {
+    const reglements = obtenirReglementsFacture(facture.id);
+    const reglementsEnAttente = reglements.filter(r => r.statut === 'en_attente');
+
+    const dateReglementRapide =
+      facture.date instanceof Date ? facture.date : new Date(facture.date);
+
+    if (reglementsEnAttente.length > 0) {
+      reglementsEnAttente.forEach(reglement => {
+        mettreAJourReglement(reglement.id, {
+          statut: 'paye',
+          dateReglement: dateReglementRapide,
+          modePaiement: 'virement',
+        });
+      });
+    } else {
+      ajouterReglement({
+        factureId: facture.id,
+        numeroFacture: facture.numero,
+        fournisseur: facture.fournisseur,
+        type: 'reglement_complet',
+        montant: facture.totalTTC,
+        dateReglement: dateReglementRapide,
+        statut: 'paye',
+        modePaiement: 'virement',
+      });
+    }
+
+    onFactureUpdate?.();
+    setForceUpdate(prev => prev + 1);
+  };
+
   const titreFournisseurs = fournisseursSelectionnes.length === 0 
     ? 'Tous les fournisseurs'
     : fournisseursSelectionnes.length === 1
@@ -727,6 +759,19 @@ export function VueFournisseur({
                           >
                             Voir
                           </button>
+                          {etat.statut !== 'regle' && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleReglerFactureRapide(facture);
+                              }}
+                              className="vue-fournisseur__action-btn vue-fournisseur__action-btn--success"
+                              title="Marquer la facture comme payée (rapide)"
+                            >
+                              <CheckCircle size={14} />
+                            </button>
+                          )}
                           {etat.acomptesPrevu && etat.acomptesPrevu.length > 0 && obtenirReglementsFacture(facture.id).length === 0 ? (
                             <button
                               type="button"

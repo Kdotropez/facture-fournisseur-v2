@@ -297,6 +297,7 @@ function App() {
       totalHT: facture.totalHT,
       totalTVA: facture.totalTVA,
       totalTTC: facture.totalTTC,
+      acompteDemandeTTC: 0,
       dateImport: new Date(),
       statut: 'en_attente',
       facturesLieesIds: [],
