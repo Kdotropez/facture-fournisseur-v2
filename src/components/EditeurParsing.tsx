@@ -37,6 +37,13 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
   const [afficherAjoutFournisseur, setAfficherAjoutFournisseur] = useState(false);
   const [tousLesFournisseurs, setTousLesFournisseurs] = useState<Fournisseur[]>(obtenirTousLesFournisseurs());
   const [champEnFocus, setChampEnFocus] = useState<{ index: number; champ: string; valeur: string } | null>(null);
+  const [historiqueSauvegardes, setHistoriqueSauvegardes] = useState<Array<{
+    id: string;
+    fournisseur: string;
+    numero: string;
+    dateFacture: string;
+    dateSauvegarde: string;
+  }>>([]);
 
   const dateFacture = factureEditee ? new Date(factureEditee.date) : null;
   const dateFactureValide = dateFacture ? !Number.isNaN(dateFacture.getTime()) : false;
@@ -78,6 +85,41 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
   useEffect(() => {
     setTousLesFournisseurs(obtenirTousLesFournisseurs());
   }, [afficherAjoutFournisseur]);
+
+  useEffect(() => {
+    try {
+      const brut = localStorage.getItem('editeur-parsing-historique');
+      if (brut) {
+        const data = JSON.parse(brut);
+        if (Array.isArray(data)) {
+          setHistoriqueSauvegardes(data);
+        }
+      }
+    } catch {
+      // ignorer
+    }
+  }, []);
+
+  const ajouterHistoriqueSauvegarde = useCallback((facture: Facture) => {
+    const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+    const entree = {
+      id: `facture-${facture.id}-${Date.now()}`,
+      fournisseur: facture.fournisseur,
+      numero: facture.numero,
+      dateFacture: Number.isNaN(dateFacture.getTime()) ? '' : dateFacture.toISOString(),
+      dateSauvegarde: new Date().toISOString(),
+    };
+
+    setHistoriqueSauvegardes((prev) => {
+      const maj = [entree, ...prev].slice(0, 15);
+      try {
+        localStorage.setItem('editeur-parsing-historique', JSON.stringify(maj));
+      } catch {
+        // ignorer
+      }
+      return maj;
+    });
+  }, []);
 
   // Charger automatiquement le fichier initial s'il est fourni
   useEffect(() => {
@@ -232,6 +274,8 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
               }
       
       await onImporter(factureAImporter);
+
+      ajouterHistoriqueSauvegarde(factureAImporter);
       
       // Afficher un message de succès
       setMessageSucces(`Facture importée avec succès ! Les corrections ont été mémorisées pour ${fournisseur}.`);
@@ -778,6 +822,33 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
               )}
             </div>
           </div>
+
+          {historiqueSauvegardes.length > 0 && (
+            <div className="editeur-parsing__facture-info" style={{ marginTop: '1rem' }}>
+              <div className="editeur-parsing__info-item">
+                <strong>Dernières sauvegardes</strong>
+              </div>
+              <div className="editeur-parsing__info-item">
+                {historiqueSauvegardes.map((item) => {
+                  const dateFacture = item.dateFacture ? new Date(item.dateFacture) : null;
+                  const dateSauvegarde = new Date(item.dateSauvegarde);
+                  return (
+                    <div key={item.id} style={{ fontSize: '0.9rem', marginTop: '0.25rem' }}>
+                      {item.fournisseur} — {item.numero} —{' '}
+                      {dateFacture && !Number.isNaN(dateFacture.getTime())
+                        ? dateFacture.toLocaleDateString('fr-FR')
+                        : 'date inconnue'}{' '}
+                      (sauvegardé le {dateSauvegarde.toLocaleDateString('fr-FR')} à{' '}
+                      {dateSauvegarde.toLocaleTimeString('fr-FR', {
+                        hour: '2-digit',
+                        minute: '2-digit',
+                      })})
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           <div className="editeur-parsing__lignes">
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>

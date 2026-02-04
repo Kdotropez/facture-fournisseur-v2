@@ -17,12 +17,15 @@ import {
   detecterDoublons,
   nettoyerDoublons
 } from '../services/reglementService';
-import { obtenirFournisseurs } from '@parsers/index';
+import { obtenirTousLesFournisseurs } from '../services/fournisseursService';
 import './VueFournisseur.css';
 
 // Fonction pour obtenir l'exercice fiscal d'une date
 // Exercice fiscal : 1er décembre au 30 novembre
 function obtenirExerciceFiscal(date: Date): string {
+  if (Number.isNaN(date.getTime())) {
+    return '';
+  }
   const annee = date.getFullYear();
   const mois = date.getMonth() + 1; // getMonth() retourne 0-11
   
@@ -40,7 +43,10 @@ function obtenirExercicesDisponibles(factures: Facture[]): string[] {
   const exercices = new Set<string>();
   factures.forEach(facture => {
     const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
-    exercices.add(obtenirExerciceFiscal(dateFacture));
+    const exercice = obtenirExerciceFiscal(dateFacture);
+    if (exercice) {
+      exercices.add(exercice);
+    }
   });
   return Array.from(exercices).sort().reverse(); // Plus récent en premier
 }
@@ -51,6 +57,7 @@ interface VueFournisseurProps {
   onFournisseursChange: (fournisseurs: Fournisseur[]) => void;
   onFactureSelect?: (facture: Facture) => void;
   onFactureUpdate?: () => void; // Callback pour forcer la mise à jour des factures
+  onClose?: () => void;
   onSupprimerFacture?: (factureId: string) => void;
 }
 
@@ -72,9 +79,10 @@ export function VueFournisseur({
   const [facturePourReglement, setFacturePourReglement] = useState<Facture | null>(null);
   const [colonneTri, setColonneTri] = useState<string>('');
   const [directionTri, setDirectionTri] = useState<'asc' | 'desc'>('asc');
-  const tousLesFournisseurs = obtenirFournisseurs();
+  const tousLesFournisseurs = obtenirTousLesFournisseurs();
   const filtreContainerRef = useRef<HTMLDivElement>(null);
   const filtreExerciceContainerRef = useRef<HTMLDivElement>(null);
+  const facturesConnuesRef = useRef<Set<string>>(new Set());
   
   // Déterminer si on doit afficher la colonne fournisseur
   const afficherColonneFournisseur = fournisseursSelectionnes.length === 0 || fournisseursSelectionnes.length > 1;
@@ -132,6 +140,46 @@ export function VueFournisseur({
     console.log('[VueFournisseur] Mise à jour forcée, factures:', toutesLesFactures.length, 'IDs:', ids.substring(0, 100));
   }, [toutesLesFactures.length, toutesLesFactures.map(f => f.id).join(',')]);
 
+  useEffect(() => {
+    const idsActuels = new Set(toutesLesFactures.map(f => f.id));
+    const nouvellesFactures = toutesLesFactures.filter(f => !facturesConnuesRef.current.has(f.id));
+    facturesConnuesRef.current = idsActuels;
+
+    if (nouvellesFactures.length === 0) return;
+
+    const exercices = new Set(exercicesSelectionnes);
+    let exercicesModifies = false;
+
+    nouvellesFactures.forEach((facture) => {
+      const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+      const exercice = obtenirExerciceFiscal(dateFacture);
+      if (!exercices.has(exercice)) {
+        exercices.add(exercice);
+        exercicesModifies = true;
+      }
+    });
+
+    if (exercicesModifies) {
+      setExercicesSelectionnes(Array.from(exercices));
+    }
+
+    if (fournisseursSelectionnes.length > 0) {
+      const fournisseurs = new Set(fournisseursSelectionnes);
+      let fournisseursModifies = false;
+
+      nouvellesFactures.forEach((facture) => {
+        if (!fournisseurs.has(facture.fournisseur)) {
+          fournisseurs.add(facture.fournisseur);
+          fournisseursModifies = true;
+        }
+      });
+
+      if (fournisseursModifies) {
+        onFournisseursChange(Array.from(fournisseurs));
+      }
+    }
+  }, [toutesLesFactures, exercicesSelectionnes, fournisseursSelectionnes, onFournisseursChange]);
+
   // Fonction pour normaliser le nom du fournisseur (regrouper les variantes LEHMANN)
   const normaliserFournisseur = (fournisseur: string): string => {
     const upper = fournisseur.toUpperCase();
@@ -159,6 +207,7 @@ export function VueFournisseur({
       facturesFiltrees = facturesFiltrees.filter(f => {
         const dateFacture = f.date instanceof Date ? f.date : new Date(f.date);
         const exerciceFacture = obtenirExerciceFiscal(dateFacture);
+        if (!exerciceFacture) return true;
         return exercicesSelectionnes.includes(exerciceFacture);
       });
     }
@@ -789,7 +838,7 @@ export function VueFournisseur({
                               type="button"
                               onClick={(e) => {
                                 e.stopPropagation();
-                                handleReglerAcomptes(facture);
+                                handleReglerAcompte(facture);
                               }}
                               className="vue-fournisseur__action-btn vue-fournisseur__action-btn--success"
                               title="Régler le prochain acompte"

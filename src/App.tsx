@@ -3,7 +3,7 @@
  */
 
 import { useRef, useState, useEffect } from 'react';
-import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard, FileSignature, X, Cloud, FolderOpen } from 'lucide-react';
+import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard, FileSignature, X, FolderOpen } from 'lucide-react';
 import { useFactures } from './hooks/useFactures';
 import { useDevis } from './hooks/useDevis';
 import { useImportPDF, detecterFournisseurDepuisContenu } from './hooks/useImportPDF';
@@ -316,13 +316,38 @@ function App() {
       return;
     }
 
-    // Ajouter la facture
-    ajouterFacture(facture);
-    
-    // Basculer vers la vue factures et sélectionner la facture importée
-    setVueActive('factures');
-    setFactureSelectionnee(facture);
-    setErreur(null);
+    try {
+      // Ajouter la facture
+      ajouterFacture(facture);
+
+      // Recharger depuis le stockage pour s'assurer qu'elle est bien sauvegardée
+      const facturesChargees = chargerFactures();
+      const factureSauvegardee = facturesChargees.find(
+        (f) => f.numero === facture.numero && f.fournisseur === facture.fournisseur
+      );
+
+      if (!factureSauvegardee) {
+        setErreur(
+          'La facture a été importée mais non retrouvée dans le stockage. ' +
+            'Vérifiez l’espace disponible et exportez vos données si besoin.'
+        );
+        return;
+      }
+
+      // Basculer vers la vue factures et sélectionner la facture importée
+      setVueActive('factures');
+      setFournisseurFiltre(null);
+      setFournisseursSelectionnes([]);
+      setTermeRecherche(facture.numero);
+      setFactureSelectionnee(factureSauvegardee);
+      setErreur(null);
+    } catch (error) {
+      setErreur(
+        `Impossible d’enregistrer la facture : ${
+          error instanceof Error ? error.message : 'Erreur inconnue'
+        }`
+      );
+    }
   };
 
   // Crée un devis à partir d'un PDF et d'un fournisseur choisi
@@ -659,6 +684,31 @@ function App() {
     creerBackupFactures();
   };
 
+  const handleRetrouverFacture = () => {
+    const numero = window.prompt('Numéro de facture à retrouver ?');
+    if (!numero) return;
+    const fournisseur = window.prompt('Fournisseur (optionnel) ?') || '';
+
+    const facturesChargees = chargerFactures();
+    const factureTrouvee = facturesChargees.find((f) => {
+      const numeroOk = f.numero === numero.trim();
+      if (!numeroOk) return false;
+      if (!fournisseur.trim()) return true;
+      return f.fournisseur.toLowerCase() === fournisseur.trim().toLowerCase();
+    });
+
+    if (!factureTrouvee) {
+      alert('Facture introuvable dans le stockage. Elle n’a pas été enregistrée.');
+      return;
+    }
+
+    setVueActive('factures');
+    setFournisseurFiltre(null);
+    setFournisseursSelectionnes([]);
+    setTermeRecherche(factureTrouvee.numero);
+    setFactureSelectionnee(factureTrouvee);
+  };
+
   const handleRestaurerChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const fichier = event.target.files?.[0];
     if (!fichier) return;
@@ -826,6 +876,27 @@ function App() {
               title="Diagnostiquer et récupérer les factures perdues"
             >
               🔍 Diagnostic
+            </button>
+            <button
+              type="button"
+              onClick={handleRetrouverFacture}
+              style={{
+                padding: '0.5rem 1rem',
+                border: '1px solid #2563eb',
+                borderRadius: '6px',
+                background: 'white',
+                color: '#2563eb',
+                cursor: 'pointer',
+                fontSize: '0.9rem',
+                fontWeight: '500',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '0.5rem',
+                marginLeft: '0.5rem',
+              }}
+              title="Retrouver une facture par numéro"
+            >
+              🔎 Retrouver facture
             </button>
             <input
               ref={inputRestaurationRef}
