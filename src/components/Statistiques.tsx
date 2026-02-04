@@ -3,21 +3,37 @@
  */
 
 import { useEffect, useMemo, useState } from 'react';
-import { TrendingUp, FileText, Building2, Euro, List, Layers, Eye, Edit3, X } from 'lucide-react';
+import { TrendingUp, FileText, Building2, Euro, List, Layers, Eye, Edit3, X, Calendar } from 'lucide-react';
 import type { Facture, Fournisseur, Statistiques } from '../types/facture';
+import type { Devis } from '../types/devis';
 import { normaliserNomFournisseur } from '../services/fournisseursService';
 import { renommerFournisseurGlobal } from '../services/renommageFournisseurService';
 import './Statistiques.css';
 
 interface StatistiquesProps {
   factures: Facture[];
+  devis: Devis[];
   onVoirFacture?: (facture: Facture) => void;
   /** Optionnel : appelé après un renommage de fournisseur pour recharger les données */
   onFournisseursMisAJour?: () => void;
 }
 
-interface FactureFiltrée {
-  facture: Facture;
+type TypeSource = 'facture' | 'devis';
+
+interface DocumentSource {
+  id: string;
+  fournisseur: Fournisseur;
+  numero: string;
+  date: Date;
+  lignes: Facture['lignes'];
+  totalHT: number;
+  totalTVA: number;
+  totalTTC: number;
+  type: TypeSource;
+}
+
+interface DocumentFiltre {
+  document: DocumentSource;
   lignes: Facture['lignes'];
   totalHTLignes: number;
   totalTVALignes: number;
@@ -51,6 +67,15 @@ type ColonneFournisseur = 'nom' | 'factures' | 'produits' | 'quantite' | 'ht' | 
 type ColonneProduit = 'ref' | 'description' | 'logo' | 'couleur' | 'quantite' | 'montant' | 'dernier';
 type ColonneDetail = 'facture' | 'date' | 'quantite' | 'montant';
 
+type LigneSyntheseTemps = {
+  cle: string;
+  libelle: string;
+  nombreFactures: number;
+  totalHT: number;
+  totalTVA: number;
+  totalTTC: number;
+};
+
 const fournisseursInitial: Record<
   Fournisseur,
   { nombre: number; totalHT: number; totalTVA: number; totalTTC: number }
@@ -62,6 +87,7 @@ const fournisseursInitial: Record<
 
 export function StatistiquesComponent({
   factures,
+  devis,
   onVoirFacture,
   onFournisseursMisAJour,
 }: StatistiquesProps) {
@@ -80,6 +106,12 @@ export function StatistiquesComponent({
       year: 'numeric',
     }).format(date);
 
+  const formaterMois = (date: Date) =>
+    new Intl.DateTimeFormat('fr-FR', {
+      month: 'long',
+      year: 'numeric',
+    }).format(date);
+
   const obtenirExerciceFiscal = (date: Date): string => {
     const mois = date.getMonth(); // 0-11
     const annee = date.getFullYear();
@@ -91,6 +123,7 @@ export function StatistiquesComponent({
   const [filtreDateFin, setFiltreDateFin] = useState('');
   const [filtreRecherche, setFiltreRecherche] = useState('');
   const [exerciceFiltre, setExerciceFiltre] = useState('');
+  const [modeSource, setModeSource] = useState<TypeSource>('facture');
 
   const [triFournisseur, setTriFournisseur] = useState<{ colonne: ColonneFournisseur; sens: SensTri }>({
     colonne: 'ht',
@@ -105,8 +138,8 @@ export function StatistiquesComponent({
     sens: 'desc',
   });
 
-  const [fournisseurSelectionne, setFournisseurSelectionne] = useState<string | null>(null);
-  const [produitSelectionne, setProduitSelectionne] = useState<string | null>(null);
+  const [fournisseurSelectionne, setFournisseurSelectionne] = useState<string>('');
+  const [produitSelectionne, setProduitSelectionne] = useState<string>('');
 
   // Édition du nom de fournisseur
   const [fournisseurEnEdition, setFournisseurEnEdition] = useState<string | null>(null);
@@ -131,30 +164,65 @@ export function StatistiquesComponent({
     }
   }, [traductions]);
 
+  useEffect(() => {
+    setFournisseurSelectionne('');
+    setProduitSelectionne('');
+  }, [modeSource]);
+
+  const documentsSource = useMemo<DocumentSource[]>(() => {
+    if (modeSource === 'devis') {
+      return devis.map((d) => ({
+        id: d.id,
+        fournisseur: d.fournisseur,
+        numero: d.numero,
+        date: d.date instanceof Date ? d.date : new Date(d.date),
+        lignes: d.lignes,
+        totalHT: d.totalHT,
+        totalTVA: d.totalTVA,
+        totalTTC: d.totalTTC,
+        type: 'devis',
+      }));
+    }
+    return factures.map((f) => ({
+      id: f.id,
+      fournisseur: f.fournisseur,
+      numero: f.numero,
+      date: f.date instanceof Date ? f.date : new Date(f.date),
+      lignes: f.lignes,
+      totalHT: f.totalHT,
+      totalTVA: f.totalTVA,
+      totalTTC: f.totalTTC,
+      type: 'facture',
+    }));
+  }, [factures, devis, modeSource]);
+
   const exercicesDisponibles = useMemo(() => {
     const exercices = new Set<string>();
-    factures.forEach((facture) => {
-      const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
-      exercices.add(obtenirExerciceFiscal(dateFacture));
+    documentsSource.forEach((doc) => {
+      exercices.add(obtenirExerciceFiscal(doc.date));
     });
     return Array.from(exercices).sort((a, b) => b.localeCompare(a, 'fr'));
-  }, [factures]);
+  }, [documentsSource]);
 
-  const facturesFiltrees = useMemo<FactureFiltrée[]>(() => {
+  const documentsFiltres = useMemo<DocumentFiltre[]>(() => {
     const debut = filtreDateDebut ? new Date(`${filtreDateDebut}T00:00:00`) : null;
     const fin = filtreDateFin ? new Date(`${filtreDateFin}T23:59:59`) : null;
     const recherche = filtreRecherche.trim().toLowerCase();
 
-    return factures.reduce<FactureFiltrée[]>((acc, facture) => {
-      const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+    return documentsSource.reduce<DocumentFiltre[]>((acc, document) => {
+      const dateDocument = document.date instanceof Date ? document.date : new Date(document.date);
       if (exerciceFiltre) {
-        const exercice = obtenirExerciceFiscal(dateFacture);
+        const exercice = obtenirExerciceFiscal(dateDocument);
         if (exercice !== exerciceFiltre) return acc;
       }
-      if (debut && dateFacture < debut) return acc;
-      if (fin && dateFacture > fin) return acc;
+      if (fournisseurSelectionne) {
+        const fournisseurCanonique = normaliserNomFournisseur(document.fournisseur);
+        if (fournisseurCanonique !== fournisseurSelectionne) return acc;
+      }
+      if (debut && dateDocument < debut) return acc;
+      if (fin && dateDocument > fin) return acc;
 
-      const lignesFiltrees = facture.lignes.filter((ligne) => {
+      const lignesFiltrees = document.lignes.filter((ligne) => {
         if (!recherche) return true;
         const ref = ligne.refFournisseur?.toLowerCase() || '';
         const desc = ligne.description.toLowerCase();
@@ -164,12 +232,12 @@ export function StatistiquesComponent({
       if (lignesFiltrees.length === 0) return acc;
 
       const totalHTLignes = lignesFiltrees.reduce((sum, ligne) => sum + ligne.montantHT, 0);
-      const ratio = facture.totalHT > 0 ? Math.min(1, totalHTLignes / facture.totalHT) : 0;
-      const totalTVALignes = facture.totalTVA * ratio;
+      const ratio = document.totalHT > 0 ? Math.min(1, totalHTLignes / document.totalHT) : 0;
+      const totalTVALignes = document.totalTVA * ratio;
       const totalTTCLignes = totalHTLignes + totalTVALignes;
 
       acc.push({
-        facture,
+        document,
         lignes: lignesFiltrees,
         totalHTLignes,
         totalTVALignes,
@@ -177,7 +245,7 @@ export function StatistiquesComponent({
       });
       return acc;
     }, []);
-  }, [factures, filtreDateDebut, filtreDateFin, filtreRecherche, exerciceFiltre]);
+  }, [documentsSource, filtreDateDebut, filtreDateFin, filtreRecherche, exerciceFiltre, fournisseurSelectionne]);
 
   const statistiquesFiltrees = useMemo<Statistiques>(() => {
     const base: Statistiques = {
@@ -188,8 +256,8 @@ export function StatistiquesComponent({
       parFournisseur: JSON.parse(JSON.stringify(fournisseursInitial)) as typeof fournisseursInitial,
     };
 
-    facturesFiltrees.forEach(({ facture, totalHTLignes, totalTVALignes, totalTTCLignes }) => {
-      const fournisseurCanonique = normaliserNomFournisseur(facture.fournisseur);
+    documentsFiltres.forEach(({ document, totalHTLignes, totalTVALignes, totalTTCLignes }) => {
+      const fournisseurCanonique = normaliserNomFournisseur(document.fournisseur);
 
       base.nombreFactures += 1;
       base.totalHT += totalHTLignes;
@@ -214,13 +282,13 @@ export function StatistiquesComponent({
     });
 
     return base;
-  }, [facturesFiltrees]);
+  }, [documentsFiltres]);
 
   const detailsParFournisseur = useMemo<Record<string, FournisseurProduits>>(() => {
     const result: Record<string, FournisseurProduits> = {};
 
-    facturesFiltrees.forEach(({ facture, lignes }) => {
-      const fournisseurCanonique = normaliserNomFournisseur(facture.fournisseur);
+    documentsFiltres.forEach(({ document, lignes }) => {
+      const fournisseurCanonique = normaliserNomFournisseur(document.fournisseur);
 
       if (!result[fournisseurCanonique]) {
         result[fournisseurCanonique] = {};
@@ -231,7 +299,7 @@ export function StatistiquesComponent({
         const ref =
           ligne.refFournisseur?.trim() ||
           ligne.description?.trim() ||
-          `LIGNE-${facture.id}-${index}`;
+          `LIGNE-${document.id}-${index}`;
         if (!produits[ref]) {
           produits[ref] = {
             ref,
@@ -258,9 +326,9 @@ export function StatistiquesComponent({
         detail.quantiteTotale += typeof ligne.quantite === 'number' ? ligne.quantite : 0;
         detail.montantHTTotal += typeof ligne.montantHT === 'number' ? ligne.montantHT : 0;
         detail.lignes.push({
-          id: facture.id,
-          numero: facture.numero,
-          date: facture.date instanceof Date ? facture.date : new Date(facture.date),
+          id: document.id,
+          numero: document.numero,
+          date: document.date instanceof Date ? document.date : new Date(document.date),
           quantite: typeof ligne.quantite === 'number' ? ligne.quantite : 0,
           montantHT: typeof ligne.montantHT === 'number' ? ligne.montantHT : 0,
           description: ligne.description,
@@ -270,7 +338,7 @@ export function StatistiquesComponent({
     });
 
     return result;
-  }, [facturesFiltrees]);
+  }, [documentsFiltres]);
 
   const quantitesParFournisseur = useMemo(() => {
     const result: Record<string, { produits: number; quantite: number }> = {};
@@ -281,6 +349,59 @@ export function StatistiquesComponent({
     });
     return result;
   }, [detailsParFournisseur]);
+
+  const statsParMois = useMemo<LigneSyntheseTemps[]>(() => {
+    const map = new Map<string, LigneSyntheseTemps>();
+    documentsFiltres.forEach(({ document, totalHTLignes, totalTVALignes, totalTTCLignes }) => {
+      const dateDocument = document.date instanceof Date ? document.date : new Date(document.date);
+      const mois = String(dateDocument.getMonth() + 1).padStart(2, '0');
+      const cle = `${dateDocument.getFullYear()}-${mois}`;
+      const libelle = formaterMois(dateDocument);
+      const existant = map.get(cle);
+      if (existant) {
+        existant.nombreFactures += 1;
+        existant.totalHT += totalHTLignes;
+        existant.totalTVA += totalTVALignes;
+        existant.totalTTC += totalTTCLignes;
+      } else {
+        map.set(cle, {
+          cle,
+          libelle,
+          nombreFactures: 1,
+          totalHT: totalHTLignes,
+          totalTVA: totalTVALignes,
+          totalTTC: totalTTCLignes,
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => b.cle.localeCompare(a.cle));
+  }, [documentsFiltres, formaterMois]);
+
+  const statsParExercice = useMemo<LigneSyntheseTemps[]>(() => {
+    const map = new Map<string, LigneSyntheseTemps>();
+    documentsFiltres.forEach(({ document, totalHTLignes, totalTVALignes, totalTTCLignes }) => {
+      const dateDocument = document.date instanceof Date ? document.date : new Date(document.date);
+      const cle = obtenirExerciceFiscal(dateDocument);
+      const existant = map.get(cle);
+      if (existant) {
+        existant.nombreFactures += 1;
+        existant.totalHT += totalHTLignes;
+        existant.totalTVA += totalTVALignes;
+        existant.totalTTC += totalTTCLignes;
+      } else {
+        map.set(cle, {
+          cle,
+          libelle: cle,
+          nombreFactures: 1,
+          totalHT: totalHTLignes,
+          totalTVA: totalTVALignes,
+          totalTTC: totalTTCLignes,
+        });
+      }
+    });
+    return Array.from(map.values()).sort((a, b) => b.cle.localeCompare(a.cle, 'fr'));
+  }, [documentsFiltres]);
+
 
   const fournisseursStats = useMemo(() => {
     return (Object.entries(statistiquesFiltrees.parFournisseur) as Array<
@@ -329,13 +450,16 @@ export function StatistiquesComponent({
   }, [fournisseursStats, triFournisseur, quantitesParFournisseur]);
 
   useEffect(() => {
-    if (!fournisseurSelectionne || !fournisseursTries.some(([nom]) => nom === fournisseurSelectionne)) {
-      const premier = fournisseursTries[0]?.[0] ?? null;
-      if (premier !== fournisseurSelectionne) {
-        setFournisseurSelectionne(premier);
-        setProduitSelectionne(null);
-      }
+    if (!fournisseurSelectionne) {
+      setProduitSelectionne('');
+      return;
     }
+    if (!fournisseursTries.some(([nom]) => nom === fournisseurSelectionne)) {
+      setFournisseurSelectionne('');
+      setProduitSelectionne('');
+      return;
+    }
+    setProduitSelectionne('');
   }, [fournisseurSelectionne, fournisseursTries]);
 
   const produitsDuFournisseur =
@@ -384,14 +508,30 @@ export function StatistiquesComponent({
 
   useEffect(() => {
     if (produitSelectionne && !produitsTries.some((p) => p.ref === produitSelectionne)) {
-      setProduitSelectionne(null);
+      setProduitSelectionne('');
     }
   }, [produitSelectionne, produitsTries]);
+
+  const produitsFiltres = produitSelectionne
+    ? produitsTries.filter((p) => p.ref === produitSelectionne)
+    : produitsTries;
 
   const produitDetail =
     fournisseurSelectionne && produitSelectionne
       ? detailsParFournisseur[fournisseurSelectionne]?.[produitSelectionne]
       : undefined;
+
+  const documentsParId = useMemo(() => {
+    const map = new Map<string, DocumentSource>();
+    documentsSource.forEach((doc) => map.set(doc.id, doc));
+    return map;
+  }, [documentsSource]);
+
+  const facturesParId = useMemo(() => {
+    const map = new Map<string, Facture>();
+    factures.forEach((facture) => map.set(facture.id, facture));
+    return map;
+  }, [factures]);
 
   const lignesDetailTriees = useMemo(() => {
     if (!produitDetail) return [];
@@ -425,8 +565,8 @@ export function StatistiquesComponent({
     return copie;
   }, [produitDetail, triDetail]);
 
-  const totalQuantiteProduits = produitsTries.reduce((sum, produit) => sum + produit.quantiteTotale, 0);
-  const totalMontantProduits = produitsTries.reduce((sum, produit) => sum + produit.montantHTTotal, 0);
+  const totalQuantiteProduits = produitsFiltres.reduce((sum, produit) => sum + produit.quantiteTotale, 0);
+  const totalMontantProduits = produitsFiltres.reduce((sum, produit) => sum + produit.montantHTTotal, 0);
 
   const changerTri = <T extends ColonneFournisseur | ColonneProduit | ColonneDetail>(
     courant: { colonne: T; sens: SensTri },
@@ -463,7 +603,9 @@ export function StatistiquesComponent({
             <FileText size={24} />
           </div>
           <div className="statistiques__card-content">
-            <span className="statistiques__card-label">Factures (filtrées)</span>
+            <span className="statistiques__card-label">
+              {modeSource === 'facture' ? 'Factures (filtrées)' : 'Devis (filtrés)'}
+            </span>
             <span className="statistiques__card-value">{statistiquesFiltrees.nombreFactures}</span>
           </div>
         </div>
@@ -501,6 +643,13 @@ export function StatistiquesComponent({
       <div className="statistiques__filters">
         <div className="statistiques__filters-group">
           <label>
+            Mode
+            <select value={modeSource} onChange={(e) => setModeSource(e.target.value as TypeSource)}>
+              <option value="facture">Facturé</option>
+              <option value="devis">Prévisionnel (devis)</option>
+            </select>
+          </label>
+          <label>
             Date début
             <input type="date" value={filtreDateDebut} onChange={(e) => setFiltreDateDebut(e.target.value)} />
           </label>
@@ -521,6 +670,38 @@ export function StatistiquesComponent({
           </label>
         </div>
         <div className="statistiques__filters-group">
+          <label>
+            Fournisseur
+            <select
+              value={fournisseurSelectionne}
+              onChange={(e) => {
+                setFournisseurSelectionne(e.target.value);
+                setProduitSelectionne('');
+              }}
+            >
+              <option value="">Tous</option>
+              {fournisseursTries.map(([fournisseur]) => (
+                <option key={fournisseur} value={fournisseur}>
+                  {fournisseur}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label>
+            Article
+            <select
+              value={produitSelectionne}
+              onChange={(e) => setProduitSelectionne(e.target.value)}
+              disabled={!fournisseurSelectionne}
+            >
+              <option value="">Tous</option>
+              {produitsTries.map((produit) => (
+                <option key={produit.ref} value={produit.ref}>
+                  {produit.ref} - {produit.description}
+                </option>
+              ))}
+            </select>
+          </label>
           <label>
             Recherche article ou réf.
             <input
@@ -546,7 +727,7 @@ export function StatistiquesComponent({
               <span>Fournisseurs</span>
             </div>
             <p style={{ margin: '0.75rem 0 0', color: '#6b7280', fontSize: '0.85rem' }}>
-              Cliquez sur un fournisseur pour afficher ses produits.
+              Sélectionnez un fournisseur pour voir ses produits.
             </p>
             <table className="statistiques__table">
               <thead>
@@ -555,7 +736,7 @@ export function StatistiquesComponent({
                     Fournisseur {renderTri(triFournisseur, 'nom')}
                   </th>
                   <th onClick={() => changerTri(triFournisseur, 'factures', setTriFournisseur)}>
-                    Factures {renderTri(triFournisseur, 'factures')}
+                    {modeSource === 'facture' ? 'Factures' : 'Devis'} {renderTri(triFournisseur, 'factures')}
                   </th>
                   <th onClick={() => changerTri(triFournisseur, 'produits', setTriFournisseur)}>
                     Produits {renderTri(triFournisseur, 'produits')}
@@ -584,7 +765,7 @@ export function StatistiquesComponent({
                     }
                     onClick={() => {
                       setFournisseurSelectionne(fournisseur);
-                      setProduitSelectionne(null);
+                      setProduitSelectionne('');
                     }}
                   >
                     <td>{fournisseur}</td>
@@ -656,7 +837,7 @@ export function StatistiquesComponent({
                   </tr>
                 </thead>
                 <tbody>
-                  {produitsTries.map((produit) => {
+                  {produitsFiltres.map((produit) => {
                     const couleursAffichees =
                       produit.couleurs.size > 0 ? Array.from(produit.couleurs).join(', ') : '-';
                     const derniereLigne = [...produit.lignes].sort(
@@ -699,7 +880,7 @@ export function StatistiquesComponent({
                       </tr>
                     );
                   })}
-                  {produitsTries.length === 0 && (
+                  {produitsFiltres.length === 0 && (
                     <tr>
                       <td colSpan={fournisseurSelectionne === 'ITALESSE' ? 9 : 8} className="statistiques__empty">
                         Aucun produit ne correspond aux critères.
@@ -707,7 +888,7 @@ export function StatistiquesComponent({
                     </tr>
                   )}
                 </tbody>
-                {produitsTries.length > 0 && (
+                {produitsFiltres.length > 0 && (
                   <tfoot>
                     <tr>
                       <td colSpan={4}>Total</td>
@@ -782,7 +963,8 @@ export function StatistiquesComponent({
               </thead>
               <tbody>
                 {lignesDetailTriees.map((ligne) => {
-                  const facture = factures.find((f) => f.id === ligne.id);
+                  const document = documentsParId.get(ligne.id);
+                  const facture = document?.type === 'facture' ? facturesParId.get(document.id) : undefined;
                   return (
                     <tr key={`${ligne.id}-${ligne.numero}-${ligne.date.getTime()}`}>
                       <td>{ligne.numero}</td>
@@ -791,13 +973,17 @@ export function StatistiquesComponent({
                       <td>{ligne.quantite}</td>
                       <td>{formaterMontant(ligne.montantHT)}</td>
                       <td>
-                        <button
-                          type="button"
-                          className="statistiques__action-btn"
-                          onClick={() => facture && onVoirFacture?.(facture)}
-                        >
-                          Voir
-                        </button>
+                        {modeSource === 'facture' && facture ? (
+                          <button
+                            type="button"
+                            className="statistiques__action-btn"
+                            onClick={() => onVoirFacture?.(facture)}
+                          >
+                            Voir
+                          </button>
+                        ) : (
+                          '—'
+                        )}
                       </td>
                     </tr>
                   );
@@ -813,6 +999,85 @@ export function StatistiquesComponent({
             </table>
           </div>
         )}
+      </div>
+
+      <div className="statistiques__section">
+        <h3 className="statistiques__section-title">
+          <Calendar size={20} />
+          Synthèse temporelle
+        </h3>
+        <div className="statistiques__panels">
+          <div className="statistiques__panel">
+            <div className="statistiques__panel-header">
+              <List size={18} />
+              <span>Par mois</span>
+            </div>
+            <table className="statistiques__table">
+              <thead>
+                <tr>
+                  <th>Mois</th>
+                  <th>{modeSource === 'facture' ? 'Factures' : 'Devis'}</th>
+                  <th>Total HT</th>
+                  <th>TVA</th>
+                  <th>TTC</th>
+                </tr>
+              </thead>
+              <tbody>
+                {statsParMois.map((ligne) => (
+                  <tr key={ligne.cle}>
+                    <td>{ligne.libelle}</td>
+                    <td>{ligne.nombreFactures}</td>
+                    <td>{formaterMontant(ligne.totalHT)}</td>
+                    <td>{formaterMontant(ligne.totalTVA)}</td>
+                    <td>{formaterMontant(ligne.totalTTC)}</td>
+                  </tr>
+                ))}
+                {statsParMois.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="statistiques__empty">
+                      Aucune facture pour la période sélectionnée.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+          <div className="statistiques__panel">
+            <div className="statistiques__panel-header">
+              <Layers size={18} />
+              <span>Par exercice</span>
+            </div>
+            <table className="statistiques__table">
+              <thead>
+                <tr>
+                  <th>Exercice</th>
+                  <th>{modeSource === 'facture' ? 'Factures' : 'Devis'}</th>
+                  <th>Total HT</th>
+                  <th>TVA</th>
+                  <th>TTC</th>
+                </tr>
+              </thead>
+              <tbody>
+                {statsParExercice.map((ligne) => (
+                  <tr key={ligne.cle}>
+                    <td>{ligne.libelle}</td>
+                    <td>{ligne.nombreFactures}</td>
+                    <td>{formaterMontant(ligne.totalHT)}</td>
+                    <td>{formaterMontant(ligne.totalTVA)}</td>
+                    <td>{formaterMontant(ligne.totalTTC)}</td>
+                  </tr>
+                ))}
+                {statsParExercice.length === 0 && (
+                  <tr>
+                    <td colSpan={5} className="statistiques__empty">
+                      Aucune facture pour la période sélectionnée.
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </div>
       </div>
 
       {/* Modal de renommage de fournisseur */}

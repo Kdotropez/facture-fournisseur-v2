@@ -1211,6 +1211,7 @@ function App() {
           <div className="app__statistiques">
             <StatistiquesComponent
               factures={toutesLesFactures}
+              devis={tousLesDevis}
               onVoirFacture={handleVoirFacture}
               onFournisseursMisAJour={async () => {
                 // Recharger les factures et devis après renommage d'un fournisseur
