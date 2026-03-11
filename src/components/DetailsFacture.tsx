@@ -3,9 +3,11 @@
  */
 
 import { useState, useEffect } from 'react';
-import { X, FileText, Calendar, Building2, Hash, AlertTriangle, CheckCircle, Edit, Plus, Trash2, Printer } from 'lucide-react';
+import { X, FileText, Calendar, Building2, Hash, AlertTriangle, CheckCircle, Edit, Plus, Trash2, Printer, Download } from 'lucide-react';
 import type { Facture, LigneProduit } from '../types/facture';
 import { obtenirFournisseurs } from '@parsers/index';
+import { obtenirReglementsFacture } from '../services/reglementService';
+import { imprimerPdfSimple, telechargerCSVSimple } from '../utils/exportSimplifie';
 import './DetailsFacture.css';
 
 interface DetailsFactureProps {
@@ -41,7 +43,34 @@ export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: Details
     }).format(montant);
   };
 
+  const lignesExport = facture.lignes.map((ligne) => ({
+    ref: ligne.refFournisseur || '',
+    nom: ligne.description,
+    nomFR: ligne.descriptionFR || '',
+    logo: ligne.logo || '',
+    quantiteDevis: '',
+    quantiteFacture: ligne.quantite,
+    prixUnitaire: ligne.prixUnitaireHT,
+  }));
+
+  const handleExporterCSV = () => {
+    const nom = `facture-${facture.numero}-${facture.fournisseur}`;
+    telechargerCSVSimple(nom, lignesExport);
+  };
+
+  const handleExporterPDF = () => {
+    const titre = `Facture ${facture.numero} — ${facture.fournisseur}`;
+    const meta = [
+      `Date facture: ${formaterDate(facture.date)}`,
+      `Total TTC: ${formaterMontant(facture.totalTTC)}`,
+    ];
+    imprimerPdfSimple(titre, meta, lignesExport);
+  };
+
   const totalHTLignes = facture.lignes.reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0);
+  const reglements = obtenirReglementsFacture(facture.id);
+  const totalRegle = reglements.reduce((sum, r) => sum + (r.montant || 0), 0);
+  const resteARegler = Math.max(0, (facture.totalTTC || 0) - totalRegle);
 
   // Prendre en compte une éventuelle remise globale pour le contrôle
   const remiseGlobaleFacture =
@@ -72,6 +101,24 @@ export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: Details
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={handleExporterPDF}
+            className="details-facture__print-btn"
+            aria-label="Exporter PDF simplifié"
+            title="Exporter PDF simplifié"
+          >
+            <FileText size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={handleExporterCSV}
+            className="details-facture__print-btn"
+            aria-label="Exporter Excel (CSV)"
+            title="Exporter Excel (CSV)"
+          >
+            <Download size={18} />
+          </button>
           <button
             type="button"
             onClick={() => window.print()}
@@ -280,6 +327,33 @@ export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: Details
               <span className="details-facture__total-value details-facture__total-value--final">
                 {formaterMontant(facture.totalTTC)}
               </span>
+            </div>
+            {reglements.length > 0 && (
+              <div className="details-facture__total-item">
+                <span className="details-facture__total-label">Acomptes / règlements</span>
+                <div className="details-facture__total-value">
+                  {reglements.map((r) => (
+                    <div key={r.id}>
+                      {new Intl.DateTimeFormat('fr-FR', {
+                        day: '2-digit',
+                        month: '2-digit',
+                        year: 'numeric',
+                      }).format(r.dateReglement)}{' '}
+                      – {formaterMontant(r.montant)} ({r.type})
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+            {reglements.length > 0 && (
+              <div className="details-facture__total-item">
+                <span className="details-facture__total-label">Total réglé</span>
+                <span className="details-facture__total-value">{formaterMontant(totalRegle)}</span>
+              </div>
+            )}
+            <div className="details-facture__total-item">
+              <span className="details-facture__total-label">Reste à régler</span>
+              <span className="details-facture__total-value">{formaterMontant(resteARegler)}</span>
             </div>
           </div>
         </div>

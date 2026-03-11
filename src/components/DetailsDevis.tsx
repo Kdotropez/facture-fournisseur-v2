@@ -13,12 +13,14 @@ import {
   CheckCircle,
   Link2,
   Edit,
+  Download,
 } from 'lucide-react';
 import type { Devis } from '../types/devis';
 import type { Facture } from '../types/facture';
 import { comparerDevisAvecFactures } from '../services/devisService';
 import { calculerEtatReglement } from '../services/reglementService';
 import { EditeurDevis } from './EditeurDevis';
+import { imprimerPdfSimple, telechargerCSVSimple } from '../utils/exportSimplifie';
 import './DetailsFacture.css';
 
 interface DetailsDevisProps {
@@ -26,9 +28,16 @@ interface DetailsDevisProps {
   toutesLesFactures: Facture[];
   onClose: () => void;
   onUpdate?: (devis: Devis) => void;
+  onTransformerEnFacture?: (devis: Devis) => void;
 }
 
-export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: DetailsDevisProps) {
+export function DetailsDevis({
+  devis,
+  toutesLesFactures,
+  onClose,
+  onUpdate,
+  onTransformerEnFacture,
+}: DetailsDevisProps) {
   const [editionMode, setEditionMode] = useState(false);
 
   if (!devis) {
@@ -56,18 +65,55 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
   const tvaDejaRecuperee = Math.min(totalFacturesTVA, totalDevisTVA);
   const tvaRestanteARecuperer = Math.max(0, totalDevisTVA - totalFacturesTVA);
 
-  const formaterDate = (date: Date) =>
-    new Intl.DateTimeFormat('fr-FR', {
+  const normaliserDate = (valeur: unknown): Date | null => {
+    if (valeur instanceof Date && !Number.isNaN(valeur.getTime())) {
+      return valeur;
+    }
+    if (typeof valeur === 'string') {
+      const d = new Date(valeur);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+    return null;
+  };
+
+  const formaterDate = (date: Date | null) => {
+    if (!date) return '—';
+    return new Intl.DateTimeFormat('fr-FR', {
       day: '2-digit',
       month: 'long',
       year: 'numeric',
     }).format(date);
+  };
 
   const formaterMontant = (montant: number) =>
     new Intl.NumberFormat('fr-FR', {
       style: 'currency',
       currency: 'EUR',
     }).format(montant);
+
+  const lignesExport = comparaison.lignes.map((ligne) => ({
+    ref: ligne.ligneDevis.refFournisseur || '',
+    nom: ligne.ligneDevis.description,
+    nomFR: ligne.ligneDevis.descriptionFR || '',
+    logo: ligne.ligneDevis.logo || '',
+    quantiteDevis: ligne.ligneDevis.quantite,
+    quantiteFacture: ligne.quantiteFacturee,
+    prixUnitaire: ligne.ligneDevis.prixUnitaireHT,
+  }));
+
+  const handleExporterCSV = () => {
+    const nom = `devis-${devis.numero}-${devis.fournisseur}`;
+    telechargerCSVSimple(nom, lignesExport);
+  };
+
+  const handleExporterPDF = () => {
+    const titre = `Devis ${devis.numero} — ${devis.fournisseur}`;
+    const meta = [
+      `Date devis: ${formaterDate(devis.date)}`,
+      `Total devis TTC: ${formaterMontant(comparaison.totalDevisTTC)}`,
+    ];
+    imprimerPdfSimple(titre, meta, lignesExport);
+  };
 
   const aFacturesLiees = comparaison.facturesLiees.length > 0;
   const ecartGlobalSignificatif = aFacturesLiees && Math.abs(comparaison.ecartGlobalTTC) > 0.01;
@@ -82,21 +128,49 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
       : undefined;
 
   const totalLivraisonsTTC = comparaison.totalLivraisonsTTC;
-  const resteALivrerTTC = comparaison.resteALivrerTTC;
-  const acompteDemandeTTC =
-    typeof devis.acompteDemandeTTC === 'number' ? devis.acompteDemandeTTC : 0;
-  const baseApresAcompteTTC = Math.max(0, comparaison.totalDevisTTC - acompteDemandeTTC);
+  const acomptesDemandes =
+    devis.acomptesDemandes && devis.acomptesDemandes.length > 0
+      ? devis.acomptesDemandes.map((acompte) => ({
+          ...acompte,
+          date: normaliserDate(acompte.date) || devis.date,
+        }))
+      : typeof devis.acompteDemandeTTC === 'number' && devis.acompteDemandeTTC > 0
+        ? [
+            {
+              id: 'acompte-legacy',
+              date: devis.date,
+              montantTTC: devis.acompteDemandeTTC,
+              note: 'Acompte global',
+            },
+          ]
+        : [];
+  const estSolde = (note?: string) => (note || '').toLowerCase().includes('solde');
+  const totalAcomptesTTC = acomptesDemandes.reduce(
+    (sum, acompte) => (estSolde(acompte.note) ? sum : sum + (acompte.montantTTC || 0)),
+    0
+  );
+  const totalAcomptesAvecSoldeTTC = acomptesDemandes.reduce(
+    (sum, acompte) => sum + (acompte.montantTTC || 0),
+    0
+  );
+  const baseApresAcompteTTC = Math.max(0, comparaison.totalDevisTTC - totalAcomptesTTC);
   const resteApresAcompteTTC = baseApresAcompteTTC;
 
   // Total déjà payé sur les factures liées (en TTC), basé sur les règlements
-  const totalPayeTTC = comparaison.facturesLiees.reduce((sum, facture) => {
-    const etat = calculerEtatReglement(facture);
-    return sum + etat.montantRegle;
-  }, 0);
+  const totalPayeTTC = aFacturesLiees
+    ? comparaison.facturesLiees.reduce((sum, facture) => {
+        const etat = calculerEtatReglement(facture);
+        return sum + etat.montantRegle;
+      }, 0)
+    : totalAcomptesAvecSoldeTTC;
 
-  // Reste à payer TTC sur le devis (indépendant des livraisons)
-  const resteAPayerTTC = Math.max(0, baseApresAcompteTTC - totalPayeTTC);
-  const resteALivrerTTCApresAcompte = Math.max(0, baseApresAcompteTTC - totalLivraisonsTTC);
+  // Reste à payer TTC sur le devis (basé sur les paiements réels)
+  const resteAPayerTTC = Math.max(0, comparaison.totalDevisTTC - totalPayeTTC);
+  // Reste à livrer TTC (basé sur les livraisons réelles)
+  const resteALivrerTTCApresAcompte = Math.max(
+    0,
+    comparaison.totalDevisTTC - totalLivraisonsTTC
+  );
 
   const [lignePourReception, setLignePourReception] = useState<number | null>(null);
   const [dateReception, setDateReception] = useState('');
@@ -110,6 +184,19 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
   const facturesDuMemeFournisseur = toutesLesFactures.filter(
     (f) => f.fournisseur === devis.fournisseur
   );
+  const factureLieeTrouvee = (devis.facturesLieesIds || []).some((id) =>
+    toutesLesFactures.some((f) => f.id === id)
+  );
+  const handleFacturerClick = () => {
+    if (!onTransformerEnFacture) return;
+    if (factureLieeTrouvee) {
+      const ok = window.confirm(
+        'Une facture liée existe déjà pour ce devis. Voulez-vous vraiment refacturer ?'
+      );
+      if (!ok) return;
+    }
+    onTransformerEnFacture(devis);
+  };
 
   const estFactureSelectionnee = (id: string) => facturesSelectionneesIds.includes(id);
 
@@ -130,6 +217,37 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={handleExporterPDF}
+            className="details-facture__close-btn"
+            aria-label="Exporter PDF simplifié"
+            title="Exporter PDF simplifié"
+          >
+            <FileText size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={handleExporterCSV}
+            className="details-facture__close-btn"
+            aria-label="Exporter Excel (CSV)"
+            title="Exporter Excel (CSV)"
+          >
+            <Download size={18} />
+          </button>
+          {onTransformerEnFacture && (
+            <button
+              type="button"
+              onClick={handleFacturerClick}
+              className="details-facture__close-btn"
+              style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}
+              aria-label="Transformer en facture"
+              title="Transformer en facture"
+            >
+              <FileText size={18} />
+              {devis.statut === 'facture_soldee' ? 'Refacturer' : 'Facturer'}
+            </button>
+          )}
           {onUpdate && (
             <button
               type="button"
@@ -304,6 +422,7 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
                   <th>Réf.</th>
                   <th>Description</th>
                   <th>Traduction FR</th>
+                  <th>Logo</th>
                   <th>Quantité devis</th>
                   <th>Quantité reçue (cumulée)</th>
                   <th>Écart qtés</th>
@@ -348,6 +467,9 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
                       </td>
                       <td className="details-facture__cell-description">
                         {ligne.ligneDevis.descriptionFR || ligne.ligneDevis.description}
+                      </td>
+                      <td className="details-facture__cell-description">
+                        {ligne.ligneDevis.logo || '-'}
                       </td>
                       <td className="details-facture__cell-number">
                         {ligne.ligneDevis.quantite}
@@ -412,17 +534,17 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
                 {formaterMontant(comparaison.totalDevisTTC)}
               </span>
             </div>
-            {acompteDemandeTTC > 0 && (
+            {totalAcomptesTTC > 0 && (
               <div className="details-facture__total-item">
-                <span className="details-facture__total-label">Acompte demandé TTC</span>
+                <span className="details-facture__total-label">Total acomptes TTC (hors solde)</span>
                 <span className="details-facture__total-value">
-                  {formaterMontant(acompteDemandeTTC)}
+                  {formaterMontant(totalAcomptesTTC)}
                 </span>
               </div>
             )}
-            {acompteDemandeTTC > 0 && (
+            {totalAcomptesTTC > 0 && (
               <div className="details-facture__total-item">
-                <span className="details-facture__total-label">Reste après acompte TTC</span>
+                <span className="details-facture__total-label">Reste après acomptes TTC</span>
                 <span className="details-facture__total-value">
                   {formaterMontant(resteApresAcompteTTC)}
                 </span>
@@ -434,6 +556,19 @@ export function DetailsDevis({ devis, toutesLesFactures, onClose, onUpdate }: De
                 {formaterMontant(totalLivraisonsTTC)}
               </span>
             </div>
+            {acomptesDemandes.length > 0 && (
+              <div className="details-facture__total-item">
+                <span className="details-facture__total-label">Acomptes demandés</span>
+                <div className="details-facture__total-value">
+                  {acomptesDemandes.map((acompte) => (
+                    <div key={acompte.id}>
+                      {formaterDate(acompte.date)} – {formaterMontant(acompte.montantTTC)}
+                      {acompte.note ? ` (${acompte.note})` : ''}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div className="details-facture__total-item">
               <span className="details-facture__total-label">Total payé TTC</span>
               <span className="details-facture__total-value">

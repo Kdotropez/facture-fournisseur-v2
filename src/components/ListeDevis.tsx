@@ -5,12 +5,15 @@
 import { useState } from 'react';
 import { Search, Filter, X, Calendar, FileText, Trash2 } from 'lucide-react';
 import type { Devis } from '../types/devis';
-import type { Fournisseur } from '../types/facture';
+import type { Facture, Fournisseur } from '../types/facture';
 import { obtenirFournisseurs } from '@parsers/index';
+import { chargerReglements } from '../services/reglementService';
 import './ListeFactures.css';
 
 interface ListeDevisProps {
   devis: Devis[];
+  totalDevis: number;
+  factures: Facture[];
   termeRecherche: string;
   onTermeRechercheChange: (terme: string) => void;
   fournisseurFiltre: Fournisseur | null;
@@ -22,6 +25,8 @@ interface ListeDevisProps {
 
 export function ListeDevis({
   devis,
+  totalDevis,
+  factures,
   termeRecherche,
   onTermeRechercheChange,
   fournisseurFiltre,
@@ -52,11 +57,40 @@ export function ListeDevis({
       currency: 'EUR',
     }).format(montant);
 
+  const reglements = chargerReglements();
+
+  const calculerAcompteDemandeTTC = (d: Devis) => {
+    if (d.acomptesDemandes && d.acomptesDemandes.length > 0) {
+      return d.acomptesDemandes.reduce((sum, a) => sum + (a.montantTTC || 0), 0);
+    }
+    return typeof d.acompteDemandeTTC === 'number' ? d.acompteDemandeTTC : 0;
+  };
+
+  const getFacturesLiees = (d: Devis): Facture[] => {
+    return (d.facturesLieesIds || [])
+      .map((id) => factures.find((f) => f.id === id))
+      .filter((f): f is Facture => !!f);
+  };
+
+  const calculerTotalRegleTTC = (d: Devis) => {
+    const facturesLiees = getFacturesLiees(d);
+    if (facturesLiees.length === 0) {
+      return calculerAcompteDemandeTTC(d);
+    }
+    const idsLiees = new Set(facturesLiees.map((f) => f.id));
+
+    const reglementsLiees = reglements.filter(
+      (r) => r.fournisseur === d.fournisseur && idsLiees.has(r.factureId)
+    );
+
+    return reglementsLiees.reduce((sum, r) => sum + (r.montant || 0), 0);
+  };
+
   return (
     <div className="liste-factures">
       <div className="liste-factures__header">
         <div>
-          <h2>Liste des devis ({devis.length})</h2>
+          <h2>Liste des devis ({devis.length}/{totalDevis})</h2>
         </div>
       </div>
 
@@ -126,6 +160,19 @@ export function ListeDevis({
             </div>
           )}
         </div>
+        {(termeRecherche || fournisseurFiltre) && (
+          <button
+            type="button"
+            onClick={() => {
+              onTermeRechercheChange('');
+              onFournisseurFiltreChange(null);
+            }}
+            className="liste-factures__filtre-btn"
+            style={{ marginLeft: 'auto' }}
+          >
+            Réinitialiser filtres
+          </button>
+        )}
       </div>
 
       {devis.length === 0 ? (
@@ -146,11 +193,21 @@ export function ListeDevis({
                 <th>Fournisseur</th>
                 <th>Date</th>
                 <th className="liste-factures__th-montant">Total TTC</th>
+                <th className="liste-factures__th-montant">Acompte demandé</th>
+                <th className="liste-factures__th-montant">Acompte réglé</th>
+                <th className="liste-factures__th-montant">Reste à régler</th>
                 {onSupprimerDevis && <th className="liste-factures__th-actions">Actions</th>}
               </tr>
             </thead>
             <tbody>
               {devis.map((d) => (
+                (() => {
+                  const acompteDemande = calculerAcompteDemandeTTC(d);
+                  const totalRegle = calculerTotalRegleTTC(d);
+                  const totalTTC = d.totalTTC || 0;
+                  const acompteRegle = Math.min(totalRegle, totalTTC);
+                  const reste = Math.max(0, totalTTC - totalRegle);
+                  return (
                 <tr
                   key={d.id}
                   className={`liste-factures__row ${
@@ -177,6 +234,21 @@ export function ListeDevis({
                       {formaterMontant(d.totalTTC)}
                     </span>
                   </td>
+                  <td className="liste-factures__td-montant">
+                    <span className="liste-factures__montant-value">
+                      {formaterMontant(acompteDemande)}
+                    </span>
+                  </td>
+                  <td className="liste-factures__td-montant">
+                    <span className="liste-factures__montant-value">
+                      {formaterMontant(acompteRegle)}
+                    </span>
+                  </td>
+                  <td className="liste-factures__td-montant">
+                    <span className="liste-factures__montant-value">
+                      {formaterMontant(reste)}
+                    </span>
+                  </td>
                   {onSupprimerDevis && (
                     <td
                       className="liste-factures__td-actions"
@@ -193,6 +265,8 @@ export function ListeDevis({
                     </td>
                   )}
                 </tr>
+                  );
+                })()
               ))}
             </tbody>
           </table>

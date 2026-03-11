@@ -16,6 +16,7 @@ import {
   Printer,
 } from 'lucide-react';
 import type { Facture } from '../types/facture';
+import type { Devis } from '../types/devis';
 import type { 
   Reglement, 
   TypeReglement, 
@@ -41,6 +42,7 @@ import './Reglements.css';
 
 interface ReglementsProps {
   factures: Facture[];
+  devis: Devis[];
 }
 
 const obtenirExerciceFiscal = (date: Date): string => {
@@ -50,7 +52,7 @@ const obtenirExerciceFiscal = (date: Date): string => {
   return `${anneeDebut}/${anneeDebut + 1}`;
 };
 
-export function Reglements({ factures }: ReglementsProps) {
+export function Reglements({ factures, devis }: ReglementsProps) {
   const [reglements, setReglements] = useState<Reglement[]>([]);
   const [factureFiltre, setFactureFiltre] = useState<string>('');
   const [fournisseurFiltre, setFournisseurFiltre] = useState<string>('');
@@ -64,7 +66,9 @@ export function Reglements({ factures }: ReglementsProps) {
   const [facturesDeveloppees, setFacturesDeveloppees] = useState<Set<string>>(new Set());
   const [afficherModalMarquerRegle, setAfficherModalMarquerRegle] = useState(false);
   const [factureAMarquer, setFactureAMarquer] = useState<Facture | null>(null);
-  const [modeJournal, setModeJournal] = useState<'individuel' | 'mois' | 'annee' | 'fournisseur'>('individuel');
+  const [modeJournal, setModeJournal] = useState<'individuel' | 'mois' | 'annee' | 'fournisseur' | 'facture'>('facture');
+  const [afficherStatsFournisseur, setAfficherStatsFournisseur] = useState(false);
+  const [afficherListeFactures, setAfficherListeFactures] = useState(false);
 
   // Charger les règlements au montage
   useEffect(() => {
@@ -353,26 +357,104 @@ export function Reglements({ factures }: ReglementsProps) {
 
   // Obtenir la liste unique des fournisseurs
   const fournisseurs = useMemo(() => {
-    return Array.from(new Set(factures.map(f => f.fournisseur)));
-  }, [factures]);
+    return Array.from(new Set([...factures.map(f => f.fournisseur), ...devis.map(d => d.fournisseur)]));
+  }, [factures, devis]);
 
   const exercicesDisponibles = useMemo(() => {
     const exercices = new Set<string>();
     reglements.forEach(r => {
       exercices.add(obtenirExerciceFiscal(new Date(r.dateReglement)));
     });
+    devis.forEach(d => {
+      (d.acomptesDemandes || []).forEach(a => {
+        exercices.add(obtenirExerciceFiscal(new Date(a.date)));
+      });
+    });
     factures.forEach(f => {
       const dateFacture = f.date instanceof Date ? f.date : new Date(f.date);
       exercices.add(obtenirExerciceFiscal(dateFacture));
     });
     return Array.from(exercices).sort((a, b) => b.localeCompare(a, 'fr'));
-  }, [reglements, factures]);
+  }, [reglements, factures, devis]);
+
+  const reglementsDevis = useMemo(() => {
+    return devis.flatMap((d) => {
+      const estFacture =
+        d.statut === 'facture_partielle' || d.statut === 'facture_soldee';
+      const aFactureLiee = (d.facturesLieesIds || []).length > 0;
+      if (estFacture || aFactureLiee) return [];
+      const acomptes =
+        d.acomptesDemandes && d.acomptesDemandes.length > 0
+          ? d.acomptesDemandes
+          : typeof d.acompteDemandeTTC === 'number' && d.acompteDemandeTTC > 0
+            ? [
+                {
+                  id: 'acompte-legacy',
+                  date: d.date,
+                  montantTTC: d.acompteDemandeTTC,
+                  note: 'Acompte',
+                },
+              ]
+            : [];
+      return acomptes.map((a) => ({
+        id: `reglement-devis-${d.id}-${a.id}`,
+        factureId: `devis-${d.id}`,
+        numeroFacture: d.numero,
+        fournisseur: d.fournisseur,
+        type: (a.note || '').toLowerCase().includes('solde') ? 'solde' : 'acompte',
+        montant: a.montantTTC || 0,
+        dateReglement: a.date instanceof Date ? a.date : new Date(a.date),
+        statut: 'paye',
+        modePaiement: 'virement',
+        notes: a.note ? `Devis ${d.numero} - ${a.note}` : `Devis ${d.numero}`,
+        dateCreation: d.dateImport instanceof Date ? d.dateImport : new Date(d.dateImport),
+        dateModification: d.dateImport instanceof Date ? d.dateImport : new Date(d.dateImport),
+        source: 'devis',
+      }));
+    });
+  }, [devis]);
+
+  const reglementsJournal = useMemo(
+    () => [
+      ...reglements.map((r) => ({ ...r, source: 'facture' as const })),
+      ...reglementsDevis,
+    ],
+    [reglements, reglementsDevis]
+  );
+
+  const soldeParDocument = useMemo(() => {
+    const totalParId = new Map<string, number>();
+    factures.forEach((f) => {
+      totalParId.set(f.id, typeof f.totalTTC === 'number' ? f.totalTTC : 0);
+    });
+    devis.forEach((d) => {
+      totalParId.set(`devis-${d.id}`, typeof d.totalTTC === 'number' ? d.totalTTC : 0);
+    });
+
+    const regleParId = new Map<string, number>();
+    reglementsJournal.forEach((r) => {
+      const prev = regleParId.get(r.factureId) || 0;
+      regleParId.set(r.factureId, prev + (r.montant || 0));
+    });
+
+    const solde = new Map<string, number>();
+    totalParId.forEach((total, id) => {
+      const regle = regleParId.get(id) || 0;
+      solde.set(id, Math.max(0, total - regle));
+    });
+    return solde;
+  }, [factures, devis, reglementsJournal]);
 
   // Règlements filtrés pour le journal en fonction des filtres actuels
   const reglementsFiltresJournal = useMemo(() => {
     const idsFacturesFiltrees = new Set(facturesFiltrees.map(f => f.id));
-    return reglements.filter(r => {
-      if (!idsFacturesFiltrees.has(r.factureId)) return false;
+    return reglementsJournal.filter(r => {
+      const estDevis = r.factureId.startsWith('devis-');
+      if (!estDevis && !idsFacturesFiltrees.has(r.factureId)) return false;
+      if (factureFiltre && !r.numeroFacture.toLowerCase().includes(factureFiltre.toLowerCase())) {
+        return false;
+      }
+      if (fournisseurFiltre && r.fournisseur !== fournisseurFiltre) return false;
       if (statutFiltre && r.statut !== statutFiltre) return false;
       if (exerciceFiltre) {
         const exercice = obtenirExerciceFiscal(new Date(r.dateReglement));
@@ -380,7 +462,7 @@ export function Reglements({ factures }: ReglementsProps) {
       }
       return true;
     });
-  }, [reglements, facturesFiltrees, statutFiltre, exerciceFiltre]);
+  }, [reglementsJournal, facturesFiltrees, factureFiltre, fournisseurFiltre, statutFiltre, exerciceFiltre]);
 
   const journalReglementsIndividuels = useMemo(() => {
     return [...reglementsFiltresJournal].sort((a, b) => {
@@ -398,7 +480,7 @@ export function Reglements({ factures }: ReglementsProps) {
   };
 
   const journalGroupes: LigneJournalGroupe[] = useMemo(() => {
-    if (modeJournal === 'individuel') return [];
+    if (modeJournal === 'individuel' || modeJournal === 'facture') return [];
 
     const map = new Map<string, LigneJournalGroupe>();
 
@@ -443,6 +525,52 @@ export function Reglements({ factures }: ReglementsProps) {
 
     return Array.from(map.values()).sort((a, b) => a.libelle.localeCompare(b.libelle, 'fr'));
   }, [modeJournal, reglementsFiltresJournal]);
+
+  const journalParFacture = useMemo(() => {
+    if (modeJournal !== 'facture') return [];
+    const map = new Map<
+      string,
+      { factureId: string; numero: string; fournisseur: string; montant: number }
+    >();
+
+    reglementsFiltresJournal.forEach((r) => {
+      const key = r.factureId;
+      const existant = map.get(key);
+      if (existant) {
+        existant.montant += typeof r.montant === 'number' ? r.montant : 0;
+      } else {
+        map.set(key, {
+          factureId: r.factureId,
+          numero: r.numeroFacture,
+          fournisseur: r.fournisseur,
+          montant: typeof r.montant === 'number' ? r.montant : 0,
+        });
+      }
+    });
+
+    return Array.from(map.values()).sort((a, b) => a.numero.localeCompare(b.numero, 'fr'));
+  }, [modeJournal, reglementsFiltresJournal]);
+
+  const devisParFactureId = useMemo(() => {
+    const map = new Map<string, Devis>();
+    devis.forEach((d) => {
+      (d.facturesLieesIds || []).forEach((id) => {
+        map.set(id, d);
+      });
+    });
+    return map;
+  }, [devis]);
+
+  const regleParDevisId = useMemo(() => {
+    const map = new Map<string, number>();
+    reglements.forEach((r) => {
+      const devis = devisParFactureId.get(r.factureId);
+      if (!devis) return;
+      const prev = map.get(devis.id) || 0;
+      map.set(devis.id, prev + (r.montant || 0));
+    });
+    return map;
+  }, [reglements, devisParFactureId]);
 
   return (
     <div className="reglements">
@@ -535,10 +663,23 @@ export function Reglements({ factures }: ReglementsProps) {
             {statistiques.facturesReglees} / {statistiques.nombreFactures}
           </div>
         </div>
+        <div className="reglements__stat-card" style={{ alignItems: 'flex-start' }}>
+          <div className="reglements__stat-label">Stats fournisseurs</div>
+          <button
+            type="button"
+            onClick={() => setAfficherStatsFournisseur((v) => !v)}
+            className="reglements__btn-add"
+            style={{ padding: '0.4rem 0.6rem', fontSize: '0.8rem' }}
+          >
+            {afficherStatsFournisseur ? 'Masquer' : 'Afficher'}
+          </button>
+        </div>
       </div>
 
       {/* Statistiques par fournisseur */}
-      {statistiques.parFournisseur && Object.keys(statistiques.parFournisseur).length > 0 && (
+      {afficherStatsFournisseur &&
+        statistiques.parFournisseur &&
+        Object.keys(statistiques.parFournisseur).length > 0 && (
         <div className="reglements__stats-fournisseurs">
           <h2>Statistiques par fournisseur</h2>
           {Object.entries(statistiques.parFournisseur).map(([fournisseur, stats]) => {
@@ -588,9 +729,19 @@ export function Reglements({ factures }: ReglementsProps) {
 
       {/* Liste des factures avec leurs règlements */}
       <div className="reglements__liste">
-        {facturesFiltrees.map(facture => {
-          const etat = etatsReglements[facture.id];
-          if (!etat) return null;
+        <div style={{ marginBottom: '1rem' }}>
+          <button
+            type="button"
+            onClick={() => setAfficherListeFactures((v) => !v)}
+            className="reglements__btn-add"
+          >
+            {afficherListeFactures ? 'Masquer les factures' : 'Afficher les factures'}
+          </button>
+        </div>
+        {afficherListeFactures &&
+          facturesFiltrees.map(facture => {
+            const etat = etatsReglements[facture.id];
+            if (!etat) return null;
 
           const reglementsFacture = reglements.filter(r => {
             if (r.factureId !== facture.id) return false;
@@ -968,7 +1119,7 @@ export function Reglements({ factures }: ReglementsProps) {
               )}
             </div>
           );
-        })}
+          })}
       </div>
 
       {/* Journal des règlements (pour impression et export papier) */}
@@ -986,6 +1137,7 @@ export function Reglements({ factures }: ReglementsProps) {
                 <option value="mois">Regroupé par mois</option>
                 <option value="annee">Regroupé par année</option>
                 <option value="fournisseur">Regroupé par fournisseur</option>
+                <option value="facture">Regroupé par facture</option>
               </select>
             </div>
             <div className="reglements__journal-mode">
@@ -1022,10 +1174,12 @@ export function Reglements({ factures }: ReglementsProps) {
             <table className="reglements__journal-table">
               <thead>
                 <tr>
+                  <th>Source</th>
                   <th>Date</th>
                   <th>Fournisseur</th>
                   <th>Facture</th>
                   <th>Montant</th>
+                  <th>Solde à devoir</th>
                   <th>Mode</th>
                   <th>Statut</th>
                 </tr>
@@ -1033,11 +1187,15 @@ export function Reglements({ factures }: ReglementsProps) {
               <tbody>
                 {journalReglementsIndividuels.map((r) => (
                   <tr key={r.id}>
+                    <td>{r.source === 'devis' ? 'Devis' : 'Facture'}</td>
                     <td>{formaterDate(r.dateReglement)}</td>
                     <td>{r.fournisseur}</td>
                     <td>{r.numeroFacture}</td>
                     <td className="reglements__journal-cell-right">
                       {formaterMontant(r.montant)}
+                    </td>
+                    <td className="reglements__journal-cell-right">
+                      {formaterMontant(soldeParDocument.get(r.factureId) || 0)}
                     </td>
                     <td>{r.modePaiement}</td>
                     <td>
@@ -1050,6 +1208,43 @@ export function Reglements({ factures }: ReglementsProps) {
                         : r.statut === 'annule'
                         ? 'Annulé'
                         : r.statut}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ) : modeJournal === 'facture' ? (
+          <div className="reglements__journal-table-container">
+            <table className="reglements__journal-table">
+              <thead>
+                <tr>
+                  <th>Facture</th>
+                  <th>Fournisseur</th>
+                  <th>Total réglé</th>
+                  <th>Solde à devoir</th>
+                  <th>Solde devis</th>
+                </tr>
+              </thead>
+              <tbody>
+                {journalParFacture.map((ligne) => (
+                  <tr key={ligne.factureId}>
+                    <td>{ligne.numero}</td>
+                    <td>{ligne.fournisseur}</td>
+                    <td className="reglements__journal-cell-right">
+                      {formaterMontant(ligne.montant)}
+                    </td>
+                    <td className="reglements__journal-cell-right">
+                      {formaterMontant(soldeParDocument.get(ligne.factureId) || 0)}
+                    </td>
+                    <td className="reglements__journal-cell-right">
+                      {(() => {
+                        const devis = devisParFactureId.get(ligne.factureId);
+                        if (!devis) return '—';
+                        const totalRegle = regleParDevisId.get(devis.id) || 0;
+                        const reste = Math.max(0, (devis.totalTTC || 0) - totalRegle);
+                        return formaterMontant(reste);
+                      })()}
                     </td>
                   </tr>
                 ))}

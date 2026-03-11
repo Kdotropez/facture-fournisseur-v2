@@ -33,6 +33,7 @@ import {
   verifierPermissionDossier,
 } from './utils/directoryHandleStore';
 import { chargerDevis } from './services/devisService';
+import { ajouterReglement } from './services/reglementService';
 
 const CHEMIN_DOSSIER_SAUVEGARDE = 'C:\\Users\\lefev\\Projets\\FACTURES FOURNISSEURS\\sauvegarde';
 
@@ -300,6 +301,92 @@ function App() {
     setEditeurDevisOuvert(false);
   };
 
+  const genererNumeroFactureDepuisDevis = (devis: Devis) => {
+    const base = devis.numero || `devis-${devis.id.slice(-6)}`;
+    const existe = (num: string) =>
+      toutesLesFactures.some(
+        (f) => f.fournisseur === devis.fournisseur && f.numero === num
+      );
+    if (!existe(base)) return base;
+    let i = 1;
+    while (existe(`${base}-FACT-${i}`)) {
+      i += 1;
+    }
+    return `${base}-FACT-${i}`;
+  };
+
+  const handleTransformerDevisEnFacture = async (devis: Devis) => {
+    const numeroFacture = genererNumeroFactureDepuisDevis(devis);
+    const acomptes = devis.acomptesDemandes || [];
+    const totalAcomptes = acomptes.reduce((sum, a) => sum + (a.montantTTC || 0), 0);
+    const reste = Math.max(0, devis.totalTTC - totalAcomptes);
+
+    const facture: Facture = {
+      id: `facture-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+      fournisseur: devis.fournisseur,
+      numero: numeroFacture,
+      date: new Date(),
+      lignes: devis.lignes.map((l) => ({
+        ...l,
+        quantiteFactureeManuelle: l.quantiteFactureeManuelle,
+        receptions: l.receptions,
+      })),
+      totalHT: devis.totalHT,
+      totalTVA: devis.totalTVA,
+      totalTTC: devis.totalTTC,
+      dateImport: new Date(),
+      donneesBrutes: devis.donneesBrutes,
+      fichierPDF: devis.fichierPDF,
+      pdfOriginal: devis.pdfOriginal,
+    };
+
+    try {
+      await ajouterFacture(facture);
+      // Enregistrer les acomptes comme règlements sur la facture
+      acomptes.forEach((acompte) => {
+        if (!acompte.montantTTC || acompte.montantTTC <= 0) return;
+        ajouterReglement({
+          factureId: facture.id,
+          numeroFacture: facture.numero,
+          fournisseur: facture.fournisseur,
+          type: 'acompte',
+          montant: acompte.montantTTC,
+          dateReglement: acompte.date,
+          statut: 'paye',
+          notes: acompte.note,
+        });
+      });
+      // Si le devis était intégralement payé, poser un solde si besoin
+      if (reste > 0) {
+        ajouterReglement({
+          factureId: facture.id,
+          numeroFacture: facture.numero,
+          fournisseur: facture.fournisseur,
+          type: 'solde',
+          montant: reste,
+          dateReglement: new Date(),
+          statut: 'paye',
+          notes: 'Solde',
+        });
+      }
+      const devisMisAJour: Devis = {
+        ...devis,
+        statut: 'facture_soldee',
+        facturesLieesIds: [facture.id],
+      };
+      await mettreAJourDevis(devisMisAJour);
+      setDevisSelectionne(devisMisAJour);
+      setVueActive('factures');
+      setFactureSelectionnee(facture);
+    } catch (error) {
+      setErreur(
+        `Impossible de transformer le devis en facture : ${
+          error instanceof Error ? error.message : 'Erreur inconnue'
+        }`
+      );
+    }
+  };
+
   const handleVoirFacture = (facture: Facture) => {
     setFactureSelectionnee(facture);
     setVueActive('factures');
@@ -371,6 +458,7 @@ function App() {
       totalTVA: facture.totalTVA,
       totalTTC: facture.totalTTC,
       acompteDemandeTTC: 0,
+      acomptesDemandes: [],
       dateImport: new Date(),
       statut: 'en_attente',
       facturesLieesIds: [],
@@ -1040,21 +1128,22 @@ function App() {
                   />
                 </div>
               </div>
-              <ListeDevis
-                devis={devisFiltres}
-                termeRecherche={termeRechercheDevis}
-                onTermeRechercheChange={setTermeRechercheDevis}
-                fournisseurFiltre={fournisseurFiltreDevis}
-                onFournisseurFiltreChange={setFournisseurFiltreDevis}
-                onDevisSelect={handleDevisSelect}
-                devisSelectionne={devisSelectionne}
-                onSupprimerDevis={(id) => {
-                  void supprimerDevis(id);
-                  if (devisSelectionne && devisSelectionne.id === id) {
-                    setDevisSelectionne(null);
-                  }
-                }}
-              />
+              {!devisSelectionne && (
+                <ListeDevis
+                  devis={devisFiltres}
+                  totalDevis={tousLesDevis.length}
+                  factures={toutesLesFactures}
+                  termeRecherche={termeRechercheDevis}
+                  onTermeRechercheChange={setTermeRechercheDevis}
+                  fournisseurFiltre={fournisseurFiltreDevis}
+                  onFournisseurFiltreChange={setFournisseurFiltreDevis}
+                  onDevisSelect={handleDevisSelect}
+                  devisSelectionne={devisSelectionne}
+                  onSupprimerDevis={(id) => {
+                    void supprimerDevis(id);
+                  }}
+                />
+              )}
               {erreur && (
                 <div className="app__error" style={{ marginTop: '1rem' }}>
                   <p>{erreur}</p>
@@ -1063,10 +1152,20 @@ function App() {
             </div>
             {devisSelectionne && (
               <div className="app__vue-fournisseur-details">
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setDevisSelectionne(null)}
+                    className="details-facture__modal-btn details-facture__modal-btn--secondary"
+                  >
+                    Retour à la liste des devis
+                  </button>
+                </div>
                 <DetailsDevis
                   devis={devisSelectionne}
                   toutesLesFactures={toutesLesFactures}
                   onClose={() => setDevisSelectionne(null)}
+                  onTransformerEnFacture={handleTransformerDevisEnFacture}
                   onUpdate={(devisModifie) => {
                     void mettreAJourDevis(devisModifie);
                     setDevisSelectionne(devisModifie);
@@ -1339,7 +1438,7 @@ function App() {
 
         {vueActive === 'reglements' && (
           <div className="app__reglements">
-            <Reglements factures={toutesLesFactures} />
+            <Reglements factures={toutesLesFactures} devis={tousLesDevis} />
           </div>
         )}
       </main>

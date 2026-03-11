@@ -7,6 +7,7 @@ import { parserRBDrinks } from './rb-drinks';
 import { parserLehmann } from './lehmann';
 import { parserItalesse } from './italesse';
 import { parserStem } from './stem';
+import { parserSantisteban } from './santisteban';
 import type { Parser, ParserResult } from './types';
 import type { Fournisseur } from '../src/types/facture';
 import { extraireTextePDF } from '../src/utils/pdfParser';
@@ -21,6 +22,7 @@ export const parseurs: Record<Fournisseur, Parser> = {
   LEHMANN: parserLehmann,
   ITALESSE: parserItalesse,
   STEM: parserStem,
+  SANTISTEBAN: parserSantisteban,
 };
 
 /**
@@ -189,6 +191,9 @@ export function detecterFournisseur(chemin: string): Fournisseur | null {
     cheminNormalise.includes('LEHMANN')
   ) {
     return 'LEHMANN';
+  }
+  if (cheminNormalise.includes('SANTISTEBAN')) {
+    return 'SANTISTEBAN';
   }
 
   // Détection automatique des nouveaux fournisseurs depuis le nom du dossier

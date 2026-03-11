@@ -12,6 +12,17 @@ export type StatutDevis =
   | 'facture_soldee'    // Tout le devis a été facturé
   | 'refuse';
 
+export interface AcompteDevis {
+  /** Identifiant unique de l'acompte */
+  id: string;
+  /** Date de demande */
+  date: Date;
+  /** Montant TTC demandé */
+  montantTTC: number;
+  /** Commentaire libre */
+  note?: string;
+}
+
 export interface Devis {
   /** Identifiant unique du devis */
   id: string;
@@ -37,6 +48,8 @@ export interface Devis {
   totalTTC: number;
   /** Acompte demandé par le fournisseur (TTC) */
   acompteDemandeTTC?: number;
+  /** Acomptes demandés (séparés) */
+  acomptesDemandes?: AcompteDevis[];
   /** Date d'import */
   dateImport: Date;
   /** Statut du devis dans le cycle de vie */

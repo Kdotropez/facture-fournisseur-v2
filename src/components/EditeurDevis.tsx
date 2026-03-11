@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from 'react';
 import { X, Plus, Trash2 } from 'lucide-react';
-import type { Devis } from '../types/devis';
+import type { Devis, AcompteDevis } from '../types/devis';
 import type { LigneProduit, Fournisseur } from '../types/facture';
 import { obtenirFournisseurs } from '@parsers/index';
 import './DetailsFacture.css';
@@ -28,38 +28,63 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
     totalTVA: 0,
     totalTTC: 0,
     acompteDemandeTTC: 0,
+    acomptesDemandes: [],
     dateImport: new Date(),
     statut: 'en_attente',
     facturesLieesIds: [],
   });
 
-  const [devis, setDevis] = useState<Devis>(() => devisInitial ?? creerDevisInitial());
+  const normaliserDate = (valeur: unknown): Date => {
+    if (valeur instanceof Date && !Number.isNaN(valeur.getTime())) {
+      return valeur;
+    }
+    if (typeof valeur === 'string') {
+      const d = new Date(valeur);
+      if (!Number.isNaN(d.getTime())) return d;
+    }
+    return new Date();
+  };
+
+  const normaliserAcomptes = (source: Devis): AcompteDevis[] => {
+    if (source.acomptesDemandes && source.acomptesDemandes.length > 0) {
+      return source.acomptesDemandes.map((acompte) => ({
+        ...acompte,
+        date: normaliserDate(acompte.date),
+      }));
+    }
+    if (typeof source.acompteDemandeTTC === 'number' && source.acompteDemandeTTC > 0) {
+      return [
+        {
+          id: `acompte-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          date: new Date(),
+          montantTTC: source.acompteDemandeTTC,
+          note: 'Acompte initial',
+        },
+      ];
+    }
+    return [];
+  };
+
+  const [devis, setDevis] = useState<Devis>(() =>
+    devisInitial
+      ? { ...devisInitial, acomptesDemandes: normaliserAcomptes(devisInitial) }
+      : creerDevisInitial()
+  );
   const [totalTVAInput, setTotalTVAInput] = useState(() =>
     typeof (devisInitial?.totalTVA) === 'number' ? String(devisInitial.totalTVA) : '0'
   );
   const [totalTTCInput, setTotalTTCInput] = useState(() =>
     typeof (devisInitial?.totalTTC) === 'number' ? String(devisInitial.totalTTC) : '0'
   );
-  const [acompteDemandeTTCInput, setAcompteDemandeTTCInput] = useState(() =>
-    typeof (devisInitial?.acompteDemandeTTC) === 'number'
-      ? String(devisInitial.acompteDemandeTTC)
-      : '0'
-  );
-
   // Si on reçoit un devis existant à éditer, on le charge dans l'état local
   useEffect(() => {
     if (devisInitial) {
-      setDevis(devisInitial);
+      setDevis({ ...devisInitial, acomptesDemandes: normaliserAcomptes(devisInitial) });
       setTotalTVAInput(
         typeof devisInitial.totalTVA === 'number' ? String(devisInitial.totalTVA) : '0'
       );
       setTotalTTCInput(
         typeof devisInitial.totalTTC === 'number' ? String(devisInitial.totalTTC) : '0'
-      );
-      setAcompteDemandeTTCInput(
-        typeof devisInitial.acompteDemandeTTC === 'number'
-          ? String(devisInitial.acompteDemandeTTC)
-          : '0'
       );
     }
   }, [devisInitial]);
@@ -133,15 +158,50 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
     return Number.isFinite(parsed) ? parsed : null;
   };
 
+  const totalAcomptesTTC = (devis.acomptesDemandes || []).reduce(
+    (sum, acompte) => sum + (acompte.montantTTC || 0),
+    0
+  );
+
+  const handleAjouterAcompte = () => {
+    setDevis((prev) => ({
+      ...prev,
+      acomptesDemandes: [
+        ...(prev.acomptesDemandes || []),
+        {
+          id: `acompte-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+          date: new Date(),
+          montantTTC: 0,
+          note: '',
+        },
+      ],
+    }));
+  };
+
+  const handleSupprimerAcompte = (id: string) => {
+    setDevis((prev) => ({
+      ...prev,
+      acomptesDemandes: (prev.acomptesDemandes || []).filter((a) => a.id !== id),
+    }));
+  };
+
+  const handleChangeAcompte = (id: string, field: keyof AcompteDevis, value: unknown) => {
+    setDevis((prev) => ({
+      ...prev,
+      acomptesDemandes: (prev.acomptesDemandes || []).map((a) =>
+        a.id === id ? { ...a, [field]: value } : a
+      ),
+    }));
+  };
+
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
 
     const totalTVAParse = normaliserMontant(totalTVAInput);
     const totalTTCParse = normaliserMontant(totalTTCInput);
-    const acompteDemandeParse = normaliserMontant(acompteDemandeTTCInput);
     const totalTVAFinal = totalTVAParse ?? 0;
     const totalTTCFinal = totalTTCParse ?? 0;
-    const acompteDemandeFinal = acompteDemandeParse ?? 0;
+    const acompteDemandeFinal = totalAcomptesTTC;
 
     // Recalculer les totaux à partir des lignes
     const totalHT = devis.lignes.reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0);
@@ -154,6 +214,7 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
       totalTVA,
       totalTTC,
       acompteDemandeTTC: acompteDemandeFinal,
+      acomptesDemandes: devis.acomptesDemandes || [],
       // Si le devis a déjà une date d'import (cas édition), on la conserve
       dateImport: devis.dateImport ?? new Date(),
     };
@@ -319,51 +380,39 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
                     <div className="details-facture__modal-field">
                       <label>Quantité *</label>
                       <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={ligne.quantite}
-                        onChange={(e) =>
-                          handleChangeLigne(
-                            index,
-                            'quantite',
-                            parseFloat(e.target.value) || 0
-                          )
-                        }
+                        type="text"
+                        inputMode="decimal"
+                        value={String(ligne.quantite)}
+                        onChange={(e) => {
+                          const parsed = normaliserMontant(e.target.value);
+                          handleChangeLigne(index, 'quantite', parsed ?? 0);
+                        }}
                         required
                       />
                     </div>
                     <div className="details-facture__modal-field">
                       <label>Prix unitaire HT *</label>
                       <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={ligne.prixUnitaireHT}
-                        onChange={(e) =>
-                          handleChangeLigne(
-                            index,
-                            'prixUnitaireHT',
-                            parseFloat(e.target.value) || 0
-                          )
-                        }
+                        type="text"
+                        inputMode="decimal"
+                        value={String(ligne.prixUnitaireHT)}
+                        onChange={(e) => {
+                          const parsed = normaliserMontant(e.target.value);
+                          handleChangeLigne(index, 'prixUnitaireHT', parsed ?? 0);
+                        }}
                         required
                       />
                     </div>
                     <div className="details-facture__modal-field">
                       <label>Remise</label>
                       <input
-                        type="number"
-                        min="0"
-                        step="0.01"
-                        value={ligne.remise}
-                        onChange={(e) =>
-                          handleChangeLigne(
-                            index,
-                            'remise',
-                            parseFloat(e.target.value) || 0
-                          )
-                        }
+                        type="text"
+                        inputMode="decimal"
+                        value={String(ligne.remise)}
+                        onChange={(e) => {
+                          const parsed = normaliserMontant(e.target.value);
+                          handleChangeLigne(index, 'remise', parsed ?? 0);
+                        }}
                       />
                     </div>
                     <div className="details-facture__modal-field">
@@ -420,22 +469,101 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
                 />
               </div>
               <div className="details-facture__modal-field">
-                <label>Acompte demandé (TTC)</label>
+                <label>Total acomptes demandés (TTC)</label>
                 <input
                   type="text"
                   inputMode="decimal"
-                  value={acompteDemandeTTCInput}
-                  onChange={(e) => {
-                    const valeur = e.target.value;
-                    setAcompteDemandeTTCInput(valeur);
-                    const parsed = normaliserMontant(valeur);
-                    if (parsed !== null) {
-                      handleChange('acompteDemandeTTC', parsed);
-                    }
-                  }}
+                  value={String(totalAcomptesTTC)}
+                  readOnly
+                  style={{ backgroundColor: '#f3f4f6' }}
                 />
               </div>
             </div>
+          </div>
+
+          <div className="details-facture__modal-section">
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: '1rem',
+              }}
+            >
+              <h3>Acomptes demandés</h3>
+              <button
+                type="button"
+                onClick={handleAjouterAcompte}
+                className="details-facture__btn-add"
+              >
+                <Plus size={16} />
+                Ajouter un acompte
+              </button>
+            </div>
+            {(devis.acomptesDemandes || []).length === 0 ? (
+              <p style={{ fontSize: '0.9rem', color: '#6b7280' }}>
+                Aucun acompte pour l’instant.
+              </p>
+            ) : (
+              <div className="details-facture__modal-lignes">
+                {(devis.acomptesDemandes || []).map((acompte) => (
+                  <div key={acompte.id} className="details-facture__modal-ligne">
+                    <div className="details-facture__modal-ligne-header">
+                      <strong>Acompte</strong>
+                      <button
+                        type="button"
+                        onClick={() => handleSupprimerAcompte(acompte.id)}
+                        className="details-facture__btn-delete"
+                      >
+                        <Trash2 size={16} />
+                      </button>
+                    </div>
+                    <div className="details-facture__modal-ligne-grid">
+                      <div className="details-facture__modal-field">
+                        <label>Date</label>
+                        <input
+                          type="date"
+                          value={formaterDate(acompte.date)}
+                          onChange={(e) =>
+                            handleChangeAcompte(
+                              acompte.id,
+                              'date',
+                              e.target.value ? new Date(e.target.value) : new Date()
+                            )
+                          }
+                        />
+                      </div>
+                      <div className="details-facture__modal-field">
+                        <label>Montant TTC</label>
+                        <input
+                          type="text"
+                          inputMode="decimal"
+                          value={String(acompte.montantTTC ?? 0)}
+                          onChange={(e) => {
+                            const parsed = normaliserMontant(e.target.value);
+                            handleChangeAcompte(
+                              acompte.id,
+                              'montantTTC',
+                              parsed ?? 0
+                            );
+                          }}
+                        />
+                      </div>
+                      <div className="details-facture__modal-field details-facture__modal-field--large">
+                        <label>Note</label>
+                        <input
+                          type="text"
+                          value={acompte.note || ''}
+                          onChange={(e) =>
+                            handleChangeAcompte(acompte.id, 'note', e.target.value || undefined)
+                          }
+                        />
+                      </div>
+                    </div>
+                  </div>
+                ))}
+              </div>
+            )}
           </div>
 
           <div className="details-facture__modal-footer">
