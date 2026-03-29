@@ -52,11 +52,76 @@ const obtenirExerciceFiscal = (date: Date): string => {
   return `${anneeDebut}/${anneeDebut + 1}`;
 };
 
+type StatutSynthesePaiement = EtatReglementFacture['statut'];
+
+interface ElementBasePaiement {
+  id: string;
+  numero: string;
+  fournisseur: string;
+  nature: 'facture' | 'facture_principale';
+  totalTTC: number;
+  totalRegle: number;
+  totalRestant: number;
+  statut: StatutSynthesePaiement;
+  factureIds: string[];
+  detailsSupplementaires?: string;
+}
+
+type DetailCarteId =
+  | 'total_factures'
+  | 'total_a_regler'
+  | 'total_regle'
+  | 'en_attente'
+  | 'factures_reglees';
+
+interface LigneDetailCarte {
+  id: string;
+  libelle: string;
+  detail?: string;
+  montant?: number;
+  tonalite?: 'default' | 'success' | 'warning';
+}
+
+interface DetailCarte {
+  id: DetailCarteId;
+  titre: string;
+  description: string;
+  resume: string;
+  lignes: LigneDetailCarte[];
+  emptyMessage: string;
+}
+
+const normaliserTexteComparaison = (valeur: string): string[] => {
+  return valeur
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3 && !/^\d+$/.test(token));
+};
+
+const scoreRattachementAcompte = (devis: Devis, facture: Facture): number => {
+  if (devis.fournisseur !== facture.fournisseur) return -1;
+  if ((facture.totalTTC || 0) >= (devis.totalTTC || 0)) return -1;
+
+  const tokensParent = new Set(normaliserTexteComparaison(devis.numero || ''));
+  const tokensEnfant = normaliserTexteComparaison(facture.numero || '');
+  const correspondances = tokensEnfant.filter((token) => tokensParent.has(token)).length;
+  const bonusAcompte = (facture.numero || '').toLowerCase().includes('acompte') ? 5 : 0;
+  const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+  const dateDevis = devis.date instanceof Date ? devis.date : new Date(devis.date);
+  const bonusChronologie = dateFacture >= dateDevis ? 1 : 0;
+
+  return correspondances * 10 + bonusAcompte + bonusChronologie;
+};
+
 export function Reglements({ factures, devis }: ReglementsProps) {
   const [reglements, setReglements] = useState<Reglement[]>([]);
   const [factureFiltre, setFactureFiltre] = useState<string>('');
   const [fournisseurFiltre, setFournisseurFiltre] = useState<string>('');
-  const [statutFiltre, setStatutFiltre] = useState<StatutReglement | ''>('');
+  const [statutFiltre, setStatutFiltre] = useState<StatutReglement | 'partiel' | 'non_regle' | ''>('');
   const [exerciceFiltre, setExerciceFiltre] = useState<string>('');
   const [afficherModal, setAfficherModal] = useState(false);
   const [reglementEdite, setReglementEdite] = useState<Reglement | null>(null);
@@ -69,6 +134,7 @@ export function Reglements({ factures, devis }: ReglementsProps) {
   const [modeJournal, setModeJournal] = useState<'individuel' | 'mois' | 'annee' | 'fournisseur' | 'facture'>('facture');
   const [afficherStatsFournisseur, setAfficherStatsFournisseur] = useState(false);
   const [afficherListeFactures, setAfficherListeFactures] = useState(false);
+  const [detailCarteActive, setDetailCarteActive] = useState<DetailCarteId | null>(null);
 
   // Charger les règlements au montage
   useEffect(() => {
@@ -123,6 +189,23 @@ export function Reglements({ factures, devis }: ReglementsProps) {
     }).format(date);
   };
 
+  const libelleTypeReglement = (type: TypeReglement) => {
+    if (type === 'acompte') return 'Acompte';
+    if (type === 'solde') return 'Solde';
+    if (type === 'avoir') return 'Avoir';
+    if (type === 'autre') return 'Autre';
+    return 'Règlement';
+  };
+
+  const correspondAuFiltreStatut = (statutGlobal: StatutSynthesePaiement) => {
+    if (!statutFiltre) return true;
+    if (statutFiltre === 'paye') return statutGlobal === 'regle';
+    if (statutFiltre === 'partiel') return statutGlobal === 'partiel';
+    if (statutFiltre === 'non_regle') return statutGlobal === 'non_regle' || statutGlobal === 'depasse';
+    if (statutFiltre === 'en_attente') return statutGlobal !== 'regle';
+    return true;
+  };
+
   const factureDansExercice = (facture: Facture, exercice: string): boolean => {
     const reglementsFacture = reglements.filter(r => r.factureId === facture.id);
     if (reglementsFacture.length > 0) {
@@ -154,7 +237,7 @@ export function Reglements({ factures, devis }: ReglementsProps) {
       }
 
       // Filtre par statut
-      if (statutFiltre && etat.statut !== statutFiltre) {
+      if (!correspondAuFiltreStatut(etat.statut)) {
         return false;
       }
 
@@ -173,6 +256,348 @@ export function Reglements({ factures, devis }: ReglementsProps) {
       exerciceFiltre ? reglementsExercice : undefined
     );
   }, [facturesFiltrees, reglementsExercice, exerciceFiltre]);
+
+  const baseFacturationPaiements = useMemo(() => {
+    const facturesParId = new Map(factures.map((facture) => [facture.id, facture]));
+    const reglementsActifs = reglements.filter((reglement) => reglement.statut !== 'annule');
+    const idsFacturesMasquees = new Set<string>();
+    const factureVersParentInfere = new Map<string, string>();
+
+    const elements: ElementBasePaiement[] = [];
+
+    const estPieceComptableAcompte = (facture: Facture, totalParent?: number) => {
+      const numero = (facture.numero || '').toLowerCase();
+      const estAcompteParNumero = numero.includes('acompte');
+      const estAcompteParReglement = reglementsActifs.some(
+        (reglement) => reglement.factureId === facture.id && reglement.type === 'acompte'
+      );
+      const totalFacture = typeof facture.totalTTC === 'number' ? facture.totalTTC : 0;
+      const estAcompteParMontant =
+        typeof totalParent === 'number' &&
+        totalParent > 0 &&
+        totalFacture > 0 &&
+        totalFacture < totalParent - 0.01;
+
+      return {
+        estAcompteParNumero,
+        estAcompteParReglement,
+        estAcompteParMontant,
+        estAcompte: estAcompteParNumero || estAcompteParReglement || estAcompteParMontant,
+      };
+    };
+
+    const idsFacturesLieesExplicitement = new Set(
+      devis.flatMap((devisCourant) => devisCourant.facturesLieesIds || [])
+    );
+
+    factures.forEach((facture) => {
+      if (idsFacturesLieesExplicitement.has(facture.id)) return;
+
+      const detection = estPieceComptableAcompte(facture);
+      if (!detection.estAcompteParNumero && !detection.estAcompteParReglement) return;
+
+      const meilleurParent = devis
+        .map((devisCourant) => ({
+          devis: devisCourant,
+          score: scoreRattachementAcompte(devisCourant, facture),
+        }))
+        .filter((candidat) => candidat.score > 0)
+        .sort((a, b) => b.score - a.score)[0];
+
+      if (meilleurParent) {
+        factureVersParentInfere.set(facture.id, meilleurParent.devis.id);
+      }
+    });
+
+    devis.forEach((devisCourant) => {
+      const facturesLiees = [
+        ...(devisCourant.facturesLieesIds || []),
+        ...factures
+          .filter((facture) => factureVersParentInfere.get(facture.id) === devisCourant.id)
+          .map((facture) => facture.id),
+      ]
+        .filter((id, index, array) => array.indexOf(id) === index)
+        .map((id) => facturesParId.get(id))
+        .filter((facture): facture is Facture => !!facture);
+
+      if (facturesLiees.length === 0) return;
+
+      const totalDevis = typeof devisCourant.totalTTC === 'number' ? devisCourant.totalTTC : 0;
+      const facturesAcompte = facturesLiees.filter((factureLiee) => {
+        return estPieceComptableAcompte(factureLiee, totalDevis).estAcompte;
+      });
+      const facturesNonAcompte = facturesLiees.filter((factureLiee) => !facturesAcompte.includes(factureLiee));
+
+      const estSimpleFactureFinale =
+        facturesLiees.length === 1 &&
+        facturesAcompte.length === 0 &&
+        Math.abs((facturesLiees[0].totalTTC || 0) - totalDevis) < 0.01;
+
+      if (estSimpleFactureFinale) {
+        return;
+      }
+
+      facturesLiees.forEach((factureLiee) => idsFacturesMasquees.add(factureLiee.id));
+
+      const totalRegle = reglementsActifs
+        .filter((reglement) => facturesLiees.some((factureLiee) => factureLiee.id === reglement.factureId))
+        .reduce((sum, reglement) => sum + (reglement.montant || 0), 0);
+
+      const recherche = factureFiltre.trim().toLowerCase();
+      const correspondRecherche =
+        !recherche ||
+        devisCourant.numero.toLowerCase().includes(recherche) ||
+        facturesLiees.some((factureLiee) => factureLiee.numero.toLowerCase().includes(recherche));
+
+      if (!correspondRecherche) return;
+      if (fournisseurFiltre && devisCourant.fournisseur !== fournisseurFiltre) return;
+      if (exerciceFiltre) {
+        const exercice = obtenirExerciceFiscal(
+          devisCourant.date instanceof Date ? devisCourant.date : new Date(devisCourant.date)
+        );
+        if (exercice !== exerciceFiltre) return;
+      }
+
+      const statut =
+        totalRegle >= totalDevis - 0.01 ? 'regle' : totalRegle > 0 ? 'partiel' : 'non_regle';
+
+      if (!correspondAuFiltreStatut(statut)) return;
+
+      elements.push({
+        id: `devis-${devisCourant.id}`,
+        numero: devisCourant.numero,
+        fournisseur: devisCourant.fournisseur,
+        nature: 'facture_principale',
+        totalTTC: totalDevis,
+        totalRegle,
+        totalRestant: Math.max(0, totalDevis - totalRegle),
+        statut,
+        factureIds: facturesLiees.map((factureLiee) => factureLiee.id),
+        detailsSupplementaires: [
+          facturesAcompte.length > 0
+            ? `Pièces comptables d’acompte intégrées : ${facturesAcompte.map((factureLiee) => factureLiee.numero).join(', ')}`
+            : '',
+          facturesNonAcompte.length > 0
+            ? `Autres pièces rattachées : ${facturesNonAcompte.map((factureLiee) => factureLiee.numero).join(', ')}`
+            : '',
+        ]
+          .filter(Boolean)
+          .join(' | '),
+      });
+    });
+
+    facturesFiltrees.forEach((facture) => {
+      if (idsFacturesMasquees.has(facture.id)) return;
+      if (factureVersParentInfere.has(facture.id)) return;
+
+      const etat = etatsReglements[facture.id];
+      if (!etat) return;
+
+      elements.push({
+        id: facture.id,
+        numero: facture.numero,
+        fournisseur: facture.fournisseur,
+        nature: 'facture',
+        totalTTC: typeof facture.totalTTC === 'number' ? facture.totalTTC : 0,
+        totalRegle: etat.montantRegle,
+        totalRestant: Math.max(0, etat.montantRestant),
+        statut: etat.statut,
+        factureIds: [facture.id],
+      });
+    });
+
+    return elements;
+  }, [
+    devis,
+    etatsReglements,
+    exerciceFiltre,
+    factures,
+    facturesFiltrees,
+    factureFiltre,
+    fournisseurFiltre,
+    reglements,
+    statutFiltre,
+  ]);
+
+  const idsFacturesBaseAffichee = useMemo(
+    () => new Set(baseFacturationPaiements.flatMap((element) => element.factureIds)),
+    [baseFacturationPaiements]
+  );
+
+  const idsFacturesAutonomesAffichees = useMemo(
+    () =>
+      new Set(
+        baseFacturationPaiements
+          .filter((element) => element.nature === 'facture')
+          .map((element) => element.id)
+      ),
+    [baseFacturationPaiements]
+  );
+
+  const idsFacturesAbsorbees = useMemo(() => {
+    const ids = new Set<string>();
+    idsFacturesBaseAffichee.forEach((id) => {
+      if (!idsFacturesAutonomesAffichees.has(id)) {
+        ids.add(id);
+      }
+    });
+    return ids;
+  }, [idsFacturesAutonomesAffichees, idsFacturesBaseAffichee]);
+
+  const facturePrincipaleParFactureLiee = useMemo(() => {
+    const map = new Map<string, { numero: string; fournisseur: string }>();
+    baseFacturationPaiements.forEach((element) => {
+      if (element.nature !== 'facture_principale') return;
+      element.factureIds.forEach((factureId) => {
+        map.set(factureId, { numero: element.numero, fournisseur: element.fournisseur });
+      });
+    });
+    return map;
+  }, [baseFacturationPaiements]);
+
+  const totalFacturesExercice = useMemo(
+    () => baseFacturationPaiements.reduce((sum, element) => sum + element.totalTTC, 0),
+    [baseFacturationPaiements]
+  );
+
+  const totalRegleAffiche = useMemo(
+    () => baseFacturationPaiements.reduce((sum, element) => sum + element.totalRegle, 0),
+    [baseFacturationPaiements]
+  );
+
+  const totalAReglerAffiche = useMemo(
+    () => Math.max(0, totalFacturesExercice - totalRegleAffiche),
+    [totalFacturesExercice, totalRegleAffiche]
+  );
+
+  const facturesRegleesAffiche = useMemo(
+    () => baseFacturationPaiements.filter((element) => element.statut === 'regle').length,
+    [baseFacturationPaiements]
+  );
+
+  const reglementsEnAttenteAffiches = useMemo(() => {
+    return reglements
+      .filter((reglement) => {
+        if (reglement.statut !== 'en_attente') return false;
+        if (!idsFacturesBaseAffichee.has(reglement.factureId)) return false;
+        if (!exerciceFiltre) return true;
+        return obtenirExerciceFiscal(new Date(reglement.dateReglement)) === exerciceFiltre;
+      })
+      .sort(
+        (a, b) =>
+          new Date(b.dateReglement).getTime() - new Date(a.dateReglement).getTime()
+      );
+  }, [reglements, idsFacturesBaseAffichee, exerciceFiltre]);
+
+  const totalEnAttenteAffiche = useMemo(
+    () =>
+      reglementsEnAttenteAffiches.reduce((sum, reglement) => {
+        const montant = typeof reglement.montant === 'number' && !isNaN(reglement.montant) ? reglement.montant : 0;
+        return sum + montant;
+      }, 0),
+    [reglementsEnAttenteAffiches]
+  );
+
+  const detailsCartes: Record<DetailCarteId, DetailCarte> = {
+    total_factures: {
+      id: 'total_factures',
+      titre: exerciceFiltre ? 'Détail du total factures de l’exercice' : 'Détail du total factures filtrées',
+      description: 'Chaque ligne correspond à une facture d’achat retenue dans la base de calcul. Les demandes d’acompte rattachées ne sont pas ajoutées comme factures supplémentaires.',
+      resume: formaterMontant(totalFacturesExercice),
+      lignes: [...baseFacturationPaiements]
+        .sort((a, b) => b.totalTTC - a.totalTTC)
+        .map((element) => ({
+          id: element.id,
+          libelle: `${element.numero} - ${element.fournisseur}`,
+          detail:
+            element.nature === 'facture_principale'
+              ? `Facture principale consolidée. Les demandes d’acompte restent des pièces comptables rattachées. ${element.detailsSupplementaires || ''}`.trim()
+              : 'Facture fournisseur visible dans la base de calcul.',
+          montant: element.totalTTC,
+        })),
+      emptyMessage: 'Aucune facture retenue pour ce calcul.',
+    },
+    total_a_regler: {
+      id: 'total_a_regler',
+      titre: 'Détail du total à régler',
+      description: 'Somme des restes à payer de chaque facture retenue dans le calcul.',
+      resume: formaterMontant(totalAReglerAffiche),
+      lignes: [...baseFacturationPaiements]
+        .filter((element) => element.totalRestant > 0.009)
+        .sort((a, b) => b.totalRestant - a.totalRestant)
+        .map((element) => ({
+          id: element.id,
+          libelle: `${element.numero} - ${element.fournisseur}`,
+          detail: `${formaterMontant(element.totalTTC)} total, ${formaterMontant(element.totalRegle)} déjà réglés`,
+          montant: element.totalRestant,
+          tonalite: 'warning',
+        })),
+      emptyMessage: 'Aucun montant restant à régler sur la sélection.',
+    },
+    total_regle: {
+      id: 'total_regle',
+      titre: 'Détail du total réglé',
+      description: 'Somme des montants déjà payés sur les factures retenues. Les demandes d’acompte alimentent la facture principale sans créer de total facture supplémentaire.',
+      resume: formaterMontant(totalRegleAffiche),
+      lignes: [...baseFacturationPaiements]
+        .filter((element) => element.totalRegle > 0.009)
+        .sort((a, b) => b.totalRegle - a.totalRegle)
+        .map((element) => ({
+          id: element.id,
+          libelle: `${element.numero} - ${element.fournisseur}`,
+          detail:
+            element.nature === 'facture_principale'
+              ? `Paiements consolidés à partir des pièces comptables rattachées. ${element.detailsSupplementaires || ''}`.trim()
+              : `Reste courant : ${formaterMontant(element.totalRestant)}`,
+          montant: element.totalRegle,
+          tonalite: 'success',
+        })),
+      emptyMessage: 'Aucun règlement payé sur la sélection.',
+    },
+    en_attente: {
+      id: 'en_attente',
+      titre: 'Détail des paiements en attente',
+      description: 'Règlements saisis mais pas encore marqués comme payés.',
+      resume: formaterMontant(totalEnAttenteAffiche),
+      lignes: reglementsEnAttenteAffiches.map((reglement) => {
+        const parent = facturePrincipaleParFactureLiee.get(reglement.factureId);
+        return {
+          id: reglement.id,
+          libelle: parent
+            ? `${parent.numero} - ${parent.fournisseur}`
+            : `${reglement.numeroFacture} - ${reglement.fournisseur}`,
+          detail: parent
+            ? `${libelleTypeReglement(reglement.type)} du ${formaterDate(new Date(reglement.dateReglement))} | Pièce comptable rattachée : ${reglement.numeroFacture}`
+            : `${libelleTypeReglement(reglement.type)} du ${formaterDate(new Date(reglement.dateReglement))}`,
+          montant: reglement.montant,
+          tonalite: 'warning' as const,
+        };
+      }),
+      emptyMessage: 'Aucun règlement en attente sur la sélection.',
+    },
+    factures_reglees: {
+      id: 'factures_reglees',
+      titre: 'Détail des factures réglées',
+      description: 'Factures dont le reste à payer est nul dans la base de calcul affichée.',
+      resume: `${facturesRegleesAffiche} / ${baseFacturationPaiements.length}`,
+      lignes: [...baseFacturationPaiements]
+        .filter((element) => element.statut === 'regle')
+        .sort((a, b) => b.totalTTC - a.totalTTC)
+        .map((element) => ({
+          id: element.id,
+          libelle: `${element.numero} - ${element.fournisseur}`,
+          detail:
+            element.nature === 'facture_principale'
+              ? `Facture principale soldée. ${element.detailsSupplementaires || ''}`.trim()
+              : 'Facture soldée.',
+          montant: element.totalTTC,
+          tonalite: 'success',
+        })),
+      emptyMessage: 'Aucune facture complètement réglée sur la sélection.',
+    },
+  };
+
+  const detailCarteSelectionnee = detailCarteActive ? detailsCartes[detailCarteActive] : null;
 
   const handleAjouterReglement = () => {
     setReglementEdite(null);
@@ -447,7 +872,7 @@ export function Reglements({ factures, devis }: ReglementsProps) {
 
   // Règlements filtrés pour le journal en fonction des filtres actuels
   const reglementsFiltresJournal = useMemo(() => {
-    const idsFacturesFiltrees = new Set(facturesFiltrees.map(f => f.id));
+    const idsFacturesFiltrees = idsFacturesBaseAffichee;
     return reglementsJournal.filter(r => {
       const estDevis = r.factureId.startsWith('devis-');
       if (!estDevis && !idsFacturesFiltrees.has(r.factureId)) return false;
@@ -462,7 +887,7 @@ export function Reglements({ factures, devis }: ReglementsProps) {
       }
       return true;
     });
-  }, [reglementsJournal, facturesFiltrees, factureFiltre, fournisseurFiltre, statutFiltre, exerciceFiltre]);
+  }, [reglementsJournal, idsFacturesBaseAffichee, factureFiltre, fournisseurFiltre, statutFiltre, exerciceFiltre]);
 
   const journalReglementsIndividuels = useMemo(() => {
     return [...reglementsFiltresJournal].sort((a, b) => {
@@ -614,7 +1039,9 @@ export function Reglements({ factures, devis }: ReglementsProps) {
           <label>Statut</label>
           <select
             value={statutFiltre}
-            onChange={(e) => setStatutFiltre(e.target.value as StatutReglement | '')}
+            onChange={(e) =>
+              setStatutFiltre(e.target.value as StatutReglement | 'partiel' | 'non_regle' | '')
+            }
           >
             <option value="">Tous</option>
             <option value="paye">Payé</option>
@@ -641,28 +1068,59 @@ export function Reglements({ factures, devis }: ReglementsProps) {
 
       {/* Section Statistiques */}
       <div className="reglements__stats">
-        <div className="reglements__stat-card">
+        <button
+          type="button"
+          className="reglements__stat-card reglements__stat-card--interactive"
+          onClick={() => setDetailCarteActive('total_factures')}
+        >
+          <div className="reglements__stat-label">
+            {exerciceFiltre ? 'Total factures de l’exercice (hors acomptes)' : 'Total factures filtrées (hors acomptes)'}
+          </div>
+          <div className="reglements__stat-value">{formaterMontant(totalFacturesExercice)}</div>
+          <div className="reglements__stat-hint">Cliquer pour voir le calcul</div>
+        </button>
+        <button
+          type="button"
+          className="reglements__stat-card reglements__stat-card--interactive"
+          onClick={() => setDetailCarteActive('total_a_regler')}
+        >
           <div className="reglements__stat-label">Total à régler</div>
-          <div className="reglements__stat-value">{formaterMontant(statistiques.totalARegler)}</div>
-        </div>
-        <div className="reglements__stat-card">
+          <div className="reglements__stat-value">{formaterMontant(totalAReglerAffiche)}</div>
+          <div className="reglements__stat-hint">Cliquer pour voir le calcul</div>
+        </button>
+        <button
+          type="button"
+          className="reglements__stat-card reglements__stat-card--interactive"
+          onClick={() => setDetailCarteActive('total_regle')}
+        >
           <div className="reglements__stat-label">Total réglé</div>
           <div className="reglements__stat-value reglements__stat-value--success">
-            {formaterMontant(statistiques.totalRegle)}
+            {formaterMontant(totalRegleAffiche)}
           </div>
-        </div>
-        <div className="reglements__stat-card">
+          <div className="reglements__stat-hint">Cliquer pour voir le calcul</div>
+        </button>
+        <button
+          type="button"
+          className="reglements__stat-card reglements__stat-card--interactive"
+          onClick={() => setDetailCarteActive('en_attente')}
+        >
           <div className="reglements__stat-label">En attente</div>
           <div className="reglements__stat-value reglements__stat-value--warning">
-            {formaterMontant(statistiques.totalEnAttente)}
+            {formaterMontant(totalEnAttenteAffiche)}
           </div>
-        </div>
-        <div className="reglements__stat-card">
+          <div className="reglements__stat-hint">Cliquer pour voir le calcul</div>
+        </button>
+        <button
+          type="button"
+          className="reglements__stat-card reglements__stat-card--interactive"
+          onClick={() => setDetailCarteActive('factures_reglees')}
+        >
           <div className="reglements__stat-label">Factures réglées</div>
           <div className="reglements__stat-value">
-            {statistiques.facturesReglees} / {statistiques.nombreFactures}
+            {facturesRegleesAffiche} / {baseFacturationPaiements.length}
           </div>
-        </div>
+          <div className="reglements__stat-hint">Cliquer pour voir le détail</div>
+        </button>
         <div className="reglements__stat-card" style={{ alignItems: 'flex-start' }}>
           <div className="reglements__stat-label">Stats fournisseurs</div>
           <button
@@ -735,11 +1193,13 @@ export function Reglements({ factures, devis }: ReglementsProps) {
             onClick={() => setAfficherListeFactures((v) => !v)}
             className="reglements__btn-add"
           >
-            {afficherListeFactures ? 'Masquer les factures' : 'Afficher les factures'}
+            {afficherListeFactures ? 'Masquer les dossiers de paiement' : 'Afficher les dossiers de paiement'}
           </button>
         </div>
         {afficherListeFactures &&
-          facturesFiltrees.map(facture => {
+          facturesFiltrees
+            .filter((facture) => !idsFacturesAbsorbees.has(facture.id))
+            .map(facture => {
             const etat = etatsReglements[facture.id];
             if (!etat) return null;
 
@@ -1397,6 +1857,70 @@ export function Reglements({ factures, devis }: ReglementsProps) {
           }}
         />
       )}
+      {detailCarteSelectionnee && (
+        <ModalDetailCarte
+          detail={detailCarteSelectionnee}
+          onFermer={() => setDetailCarteActive(null)}
+        />
+      )}
+    </div>
+  );
+}
+
+interface ModalDetailCarteProps {
+  detail: DetailCarte;
+  onFermer: () => void;
+}
+
+function ModalDetailCarte({ detail, onFermer }: ModalDetailCarteProps) {
+  const formaterMontant = (montant: number) => {
+    return new Intl.NumberFormat('fr-FR', {
+      style: 'currency',
+      currency: 'EUR',
+    }).format(montant);
+  };
+
+  return (
+    <div className="reglements__modal-overlay" onClick={onFermer}>
+      <div
+        className="reglements__modal reglements__modal--large"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="reglements__detail-modal-header">
+          <div>
+            <h2>{detail.titre}</h2>
+            <p>{detail.description}</p>
+          </div>
+          <button type="button" className="reglements__detail-modal-close" onClick={onFermer}>
+            Fermer
+          </button>
+        </div>
+
+        <div className="reglements__detail-modal-summary">
+          <span className="reglements__detail-modal-summary-label">Résultat affiché</span>
+          <strong className="reglements__detail-modal-summary-value">{detail.resume}</strong>
+        </div>
+
+        {detail.lignes.length === 0 ? (
+          <div className="reglements__detail-empty">{detail.emptyMessage}</div>
+        ) : (
+          <div className="reglements__detail-list">
+            {detail.lignes.map((ligne) => (
+              <div key={ligne.id} className="reglements__detail-item">
+                <div className="reglements__detail-item-main">
+                  <strong>{ligne.libelle}</strong>
+                  {ligne.detail && <span>{ligne.detail}</span>}
+                </div>
+                {typeof ligne.montant === 'number' && (
+                  <span className={`reglements__detail-amount reglements__detail-amount--${ligne.tonalite || 'default'}`}>
+                    {formaterMontant(ligne.montant)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }

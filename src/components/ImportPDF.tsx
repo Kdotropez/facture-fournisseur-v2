@@ -3,7 +3,7 @@
  */
 
 import { useRef, useState, useCallback } from 'react';
-import { Upload, X, FileText } from 'lucide-react';
+import { Upload, X, FileText, Sparkles, ShieldCheck } from 'lucide-react';
 import type { Fournisseur } from '../types/facture';
 import { obtenirFournisseurs } from '@parsers/index';
 import './ImportPDF.css';
@@ -107,51 +107,51 @@ export function ImportPDF({
 
   return (
     <div className="import-pdf">
-      <div className="import-pdf__header">
-        <h2>Importer des factures PDF</h2>
-        <p>Glissez-déposez vos fichiers PDF ou cliquez pour sélectionner</p>
+      <div className="import-pdf__intro">
+        <div className="import-pdf__intro-card">
+          <Sparkles size={18} />
+          <span>Détection automatique du fournisseur si vous ne sélectionnez rien.</span>
+        </div>
+        <div className="import-pdf__intro-card">
+          <ShieldCheck size={18} />
+          <span>Les règles de parsing déjà apprises sont réutilisées pendant l&apos;import.</span>
+        </div>
       </div>
 
-      <div
-        className={`import-pdf__dropzone ${isDragging ? 'import-pdf__dropzone--dragging' : ''}`}
-        onDragEnter={handleDragEnter}
-        onDragOver={handleDragOver}
-        onDragLeave={handleDragLeave}
-        onDrop={handleDrop}
-        onClick={() => inputRef.current?.click()}
-      >
-        <Upload size={48} className="import-pdf__icon" />
-        <p className="import-pdf__text">
-          {isDragging ? 'Déposez les fichiers ici' : 'Cliquez ou glissez-déposez vos fichiers PDF'}
-        </p>
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".pdf,application/pdf"
-          multiple
-          onChange={handleFileSelect}
-          className="import-pdf__input"
-        />
-      </div>
+      <div className="import-pdf__workspace">
+        <div
+          className={`import-pdf__dropzone ${isDragging ? 'import-pdf__dropzone--dragging' : ''}`}
+          onDragEnter={handleDragEnter}
+          onDragOver={handleDragOver}
+          onDragLeave={handleDragLeave}
+          onDrop={handleDrop}
+          onClick={() => inputRef.current?.click()}
+        >
+          <Upload size={48} className="import-pdf__icon" />
+          <p className="import-pdf__title">
+            {isDragging ? 'Déposez les fichiers ici' : 'Ajoutez vos factures PDF'}
+          </p>
+          <p className="import-pdf__text">
+            Cliquez pour sélectionner un ou plusieurs fichiers, ou glissez-déposez-les ici.
+          </p>
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".pdf,application/pdf"
+            multiple
+            onChange={handleFileSelect}
+            className="import-pdf__input"
+          />
+        </div>
 
-      {fichiersActuels.length > 0 && (
-        <div className="import-pdf__files">
-          <div className="import-pdf__files-header">
-            <h3>Fichiers sélectionnés ({fichiersActuels.length})</h3>
-            <button
-              type="button"
-              onClick={handleClear}
-              className="import-pdf__clear-btn"
-              disabled={importEnCours}
-            >
-              <X size={16} />
-              Tout effacer
-            </button>
+        <div className="import-pdf__settings">
+          <div className="import-pdf__settings-header">
+            <h3>Paramètres d&apos;import</h3>
+            <p>Le fournisseur peut être détecté automatiquement ou imposé avant parsing.</p>
           </div>
-
           <div className="import-pdf__fournisseur-select">
             <label htmlFor="fournisseur-select">
-              Fournisseur (optionnel - sera détecté automatiquement si non spécifié)
+              Fournisseur
             </label>
             <select
               id="fournisseur-select"
@@ -164,6 +164,26 @@ export function ImportPDF({
                 <option key={f} value={f}>{f}</option>
               ))}
             </select>
+            <p className="import-pdf__helper-text">
+              Laissez `Auto-détection` pour utiliser les règles existantes à partir du contenu du PDF.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      {fichiersActuels.length > 0 && (
+        <div className="import-pdf__files">
+          <div className="import-pdf__files-header">
+            <h3>Fichiers prêts à importer ({fichiersActuels.length})</h3>
+            <button
+              type="button"
+              onClick={handleClear}
+              className="import-pdf__clear-btn"
+              disabled={importEnCours}
+            >
+              <X size={16} />
+              Tout effacer
+            </button>
           </div>
 
           <ul className="import-pdf__file-list">

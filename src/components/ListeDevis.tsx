@@ -8,6 +8,7 @@ import type { Devis } from '../types/devis';
 import type { Facture, Fournisseur } from '../types/facture';
 import { obtenirFournisseurs } from '@parsers/index';
 import { chargerReglements } from '../services/reglementService';
+import { calculerTotalAcompteReferenceTTC } from '../services/devisService';
 import './ListeFactures.css';
 
 interface ListeDevisProps {
@@ -59,18 +60,14 @@ export function ListeDevis({
 
   const reglements = chargerReglements();
 
-  const calculerAcompteDemandeTTC = (d: Devis) => {
-    if (d.acomptesDemandes && d.acomptesDemandes.length > 0) {
-      return d.acomptesDemandes.reduce((sum, a) => sum + (a.montantTTC || 0), 0);
-    }
-    return typeof d.acompteDemandeTTC === 'number' ? d.acompteDemandeTTC : 0;
-  };
-
   const getFacturesLiees = (d: Devis): Facture[] => {
     return (d.facturesLieesIds || [])
       .map((id) => factures.find((f) => f.id === id))
       .filter((f): f is Facture => !!f);
   };
+
+  const calculerAcompteDemandeTTC = (d: Devis) =>
+    calculerTotalAcompteReferenceTTC(d, getFacturesLiees(d), reglements);
 
   const calculerTotalRegleTTC = (d: Devis) => {
     const facturesLiees = getFacturesLiees(d);

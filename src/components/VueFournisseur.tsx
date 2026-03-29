@@ -4,7 +4,7 @@
  */
 
 import { useMemo, useState, useEffect, useRef } from 'react';
-import { Building2, FileText, Euro, Calendar, TrendingUp, X, Filter, CheckSquare, Square, Plus, CreditCard, ArrowUp, ArrowDown, ArrowUpDown, Trash2, CheckCircle } from 'lucide-react';
+import { Building2, FileText, Euro, Calendar, TrendingUp, X, Filter, CheckSquare, Square, Plus, CreditCard, ArrowUp, ArrowDown, ArrowUpDown, Trash2, CheckCircle, RotateCcw } from 'lucide-react';
 import type { Facture, Fournisseur } from '../types/facture';
 import { 
   calculerEtatReglement, 
@@ -14,6 +14,7 @@ import {
   obtenirReglePaiement,
   obtenirReglementsFacture,
   mettreAJourReglement,
+  dereglerFacture,
   detecterDoublons,
   nettoyerDoublons
 } from '../services/reglementService';
@@ -476,6 +477,20 @@ export function VueFournisseur({
     setForceUpdate(prev => prev + 1);
   };
 
+  const handleDereglageFacture = (facture: Facture) => {
+    const confirmer = window.confirm(
+      'Dérégler cette facture ?\n\n' +
+        'Tous les règlements payés repasseront en attente.'
+    );
+    if (!confirmer) return;
+    const modifs = dereglerFacture(facture);
+    if (modifs === 0) {
+      window.alert('Aucun règlement payé à déréglé.');
+    }
+    onFactureUpdate?.();
+    setForceUpdate(prev => prev + 1);
+  };
+
   const titreFournisseurs = fournisseursSelectionnes.length === 0 
     ? 'Tous les fournisseurs'
     : fournisseursSelectionnes.length === 1
@@ -819,6 +834,19 @@ export function VueFournisseur({
                               title="Marquer la facture comme payée (rapide)"
                             >
                               <CheckCircle size={14} />
+                            </button>
+                          )}
+                          {etat.statut !== 'non_regle' && (
+                            <button
+                              type="button"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDereglageFacture(facture);
+                              }}
+                              className="vue-fournisseur__action-btn vue-fournisseur__action-btn--secondary"
+                              title="Dérégler la facture"
+                            >
+                              <RotateCcw size={14} />
                             </button>
                           )}
                           {etat.acomptesPrevu && etat.acomptesPrevu.length > 0 && obtenirReglementsFacture(facture.id).length === 0 ? (

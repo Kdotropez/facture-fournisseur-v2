@@ -44,14 +44,38 @@ export async function detecterFournisseurDepuisContenu(fichier: File): Promise<F
       return 'RB DRINKS';
     }
     
-    // PRIORITÉ 3: ITALESSE (critères plus stricts pour éviter les faux positifs)
+    // PRIORITÉ 3: RETIF
+    if (
+      texteUpper.includes('RETIF') ||
+      texteUpper.includes('REMI FACTURE') ||
+      (
+        texteUpper.includes('CODE DESIGNATION QUANTITE PX BRUT') &&
+        texteUpper.includes('TOTAL HT :') &&
+        texteUpper.includes('TOTAL TVA :') &&
+        texteUpper.includes('TOTAL TTC :')
+      )
+    ) {
+      console.log('[DETECTION] ✅ RETIF détecté');
+      return 'RETIF';
+    }
+
+    // PRIORITÉ 4: ITALESSE (critères plus stricts pour éviter les faux positifs)
     // Ne détecter ITALESSE que si on a des mots-clés TRÈS spécifiques
     if (
       texteUpper.includes('FATTURA RIEPILOGATIVA') ||
       texteUpper.includes('ITALESSE S.P.A.') ||
       texteUpper.includes('ITALESSE SPA') ||
       (texteUpper.includes('VELA') && texteUpper.includes('BUCKET') && !texteUpper.includes('LEHMANN')) ||
-      (texteUpper.includes('RELAIS DES COCHES') && !texteUpper.includes('LEHMANN'))
+      (
+        texteUpper.includes('RELAIS DES COCHES') &&
+        (
+          texteUpper.includes('FATTURA') ||
+          texteUpper.includes('TOTALE DOCUMENTO') ||
+          texteUpper.includes('DATA DOC')
+        ) &&
+        !texteUpper.includes('LEHMANN') &&
+        !texteUpper.includes('RETIF')
+      )
     ) {
       console.log('[DETECTION] ✅ ITALESSE détecté');
       return 'ITALESSE';
@@ -98,6 +122,11 @@ export function useImportPDF() {
               fournisseurDetecte = 'RB DRINKS';
               console.log('[DETECTION] ✅ RB DRINKS détecté depuis le nom de fichier');
             } 
+            // RETIF
+            else if (nomFichier.includes('RETIF')) {
+              fournisseurDetecte = 'RETIF';
+              console.log('[DETECTION] ✅ RETIF détecté depuis le nom de fichier');
+            }
             // ITALESSE : fichiers "RELAIS DES COCHES F. XXXX.pdf" ou "I1.pdf", etc.
             else if (nomFichier.includes('RELAIS DES COCHES') || nomFichier.match(/^I\d+\.PDF$/i)) {
               fournisseurDetecte = 'ITALESSE';
@@ -114,7 +143,9 @@ export function useImportPDF() {
       const resultat = await parserFacture(fichier, fournisseurDetecte);
       
       if (resultat.erreurs && resultat.erreurs.length > 0) {
-        throw new Error(resultat.erreurs.join(', '));
+        // Ne pas bloquer l'import si une facture a été extraite
+        console.warn('[IMPORT] Import avec erreurs:', resultat.erreurs);
+        setErreur(`Import avec avertissements : ${resultat.erreurs.join(', ')}`);
       }
 
       const pdfOriginal = await lireFichierEnDataURL(fichier);

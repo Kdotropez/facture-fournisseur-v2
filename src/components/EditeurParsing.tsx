@@ -3,10 +3,11 @@
  * Permet de tester le parsing d'un document avant l'import
  */
 
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react';
 import { FileText, Upload, X, Edit2, Save, RotateCcw, AlertCircle, Plus } from 'lucide-react';
 import { parserFacture } from '@parsers/index';
 import { extraireTextePDF } from '../utils/pdfParser';
+import { telechargerCSVSimple } from '../utils/exportSimplifie';
 import type { Facture, LigneProduit } from '../types/facture';
 import type { Fournisseur } from '../types/facture';
 import { extraireReglesDepuisFacture, memoriserModeleParsing, apprendreCorrections } from '../services/parsingRulesService';
@@ -15,6 +16,27 @@ import { obtenirTousLesFournisseurs, ajouterFournisseurPersonnalise } from '../s
 import './EditeurParsing.css';
 
 const TAUX_TVA_PAR_DEFAUT = 0.20;
+const arrondir2 = (valeur: number) =>
+  Math.round((valeur + Number.EPSILON) * 100) / 100;
+
+const fournisseurSansTVA = (facture: Facture | null): boolean =>
+  !!facture && facture.fournisseur === 'ITALESSE';
+
+const obtenirTauxTVAFacture = (facture: Facture): number => {
+  if (fournisseurSansTVA(facture)) {
+    return 0;
+  }
+
+  if (facture.donneesBrutes && typeof facture.donneesBrutes.tauxTVA === 'number') {
+    return Math.max(0, facture.donneesBrutes.tauxTVA);
+  }
+
+  if (facture.totalHT > 0 && facture.totalTVA > 0) {
+    return Math.max(0, facture.totalTVA / facture.totalHT);
+  }
+
+  return TAUX_TVA_PAR_DEFAUT;
+};
 
 interface EditeurParsingProps {
   onImporter: (facture: Facture) => Promise<void>;
@@ -37,6 +59,84 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
   const [afficherAjoutFournisseur, setAfficherAjoutFournisseur] = useState(false);
   const [tousLesFournisseurs, setTousLesFournisseurs] = useState<Fournisseur[]>(obtenirTousLesFournisseurs());
   const [champEnFocus, setChampEnFocus] = useState<{ index: number; champ: string; valeur: string } | null>(null);
+  const [lignesManuelles, setLignesManuelles] = useState<string>('');
+  const [draftInfo, setDraftInfo] = useState<{ exists: boolean; savedAt?: Date }>({ exists: false });
+  const [draftGlobalInfo, setDraftGlobalInfo] = useState<{ exists: boolean; savedAt?: Date }>({ exists: false });
+  const draftTimerRef = useRef<number | null>(null);
+
+  const draftKey = useMemo(() => {
+    const numero = factureEditee?.numero || '';
+    const fournisseurKey = factureEditee?.fournisseur || '';
+    const fichierNom = fichier?.name || '';
+    const ident = [fournisseurKey, numero, fichierNom].filter(Boolean).join('|') || 'editeur-parsing';
+    return `editeur-parsing-draft-${ident}`;
+  }, [factureEditee?.numero, factureEditee?.fournisseur, fichier?.name]);
+
+  const chargerBrouillon = useCallback(() => {
+    try {
+      const brut = localStorage.getItem(draftKey);
+      if (!brut) {
+        setDraftInfo({ exists: false });
+        return null;
+      }
+      const parsed = JSON.parse(brut);
+      const savedAt = parsed?.savedAt ? new Date(parsed.savedAt) : undefined;
+      setDraftInfo({ exists: true, savedAt });
+      return parsed;
+    } catch {
+      setDraftInfo({ exists: false });
+      return null;
+    }
+  }, [draftKey]);
+
+  const restaurerBrouillon = useCallback(() => {
+    const draft = chargerBrouillon();
+    if (!draft) {
+      setErreurs(['Aucun brouillon disponible.']);
+      return;
+    }
+    if (draft.factureEditee) {
+      setFactureEditee(draft.factureEditee);
+    }
+    if (typeof draft.lignesManuelles === 'string') {
+      setLignesManuelles(draft.lignesManuelles);
+    }
+    setModeEdition(true);
+  }, [chargerBrouillon]);
+
+  const effacerBrouillon = useCallback(() => {
+    try {
+      localStorage.removeItem(draftKey);
+    } catch {
+      // ignorer
+    }
+    setDraftInfo({ exists: false });
+  }, [draftKey]);
+
+  const restaurerDernierBrouillonGlobal = useCallback(() => {
+    try {
+      const dernierKey = localStorage.getItem('editeur-parsing-draft-last-key');
+      if (!dernierKey) {
+        setErreurs(['Aucun brouillon global disponible.']);
+        return;
+      }
+      const brut = localStorage.getItem(dernierKey);
+      if (!brut) {
+        setErreurs(['Aucun brouillon global disponible.']);
+        return;
+      }
+      const parsed = JSON.parse(brut);
+      if (parsed?.factureEditee) {
+        setFactureEditee(parsed.factureEditee);
+      }
+      if (typeof parsed?.lignesManuelles === 'string') {
+        setLignesManuelles(parsed.lignesManuelles);
+      }
+      setModeEdition(true);
+    } catch {
+      setErreurs(['Impossible de restaurer le brouillon global.']);
+    }
+  }, []);
   const [historiqueSauvegardes, setHistoriqueSauvegardes] = useState<Array<{
     id: string;
     fournisseur: string;
@@ -60,6 +160,15 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
       ? factureEditee.donneesBrutes.remise
       : 0);
   const netHTCalcule = totalHTBrut - remiseGlobale;
+  const lignesExport = factureEditee?.lignes.map((ligne) => ({
+    ref: ligne.refFournisseur || '',
+    nom: ligne.description,
+    nomFR: ligne.descriptionFR || '',
+    logo: ligne.logo || '',
+    quantiteDevis: '',
+    quantiteFacture: ligne.quantite,
+    prixUnitaire: ligne.prixUnitaireHT,
+  })) || [];
 
   // Saisie utilisateur brute pour la remise globale (pour éviter les blocages du type="number")
   const [remiseGlobaleBrute, setRemiseGlobaleBrute] = useState<string>('');
@@ -304,15 +413,12 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
     nouvellesLignes[index] = { ...nouvellesLignes[index], ...ligne };
     
     // Recalculer le total HT à partir des lignes
-    const totalHT = nouvellesLignes.reduce((sum, l) => sum + l.montantHT, 0);
+    const totalHT = arrondir2(nouvellesLignes.reduce((sum, l) => sum + l.montantHT, 0));
 
     // Utiliser le taux de TVA issu des données brutes si présent, sinon 20 %
-    const tauxTVA =
-      factureEditee.donneesBrutes && typeof factureEditee.donneesBrutes.tauxTVA === 'number'
-        ? factureEditee.donneesBrutes.tauxTVA
-        : TAUX_TVA_PAR_DEFAUT;
-    const totalTVA = Math.round(totalHT * tauxTVA * 100) / 100;
-    const totalTTC = totalHT + totalTVA;
+    const tauxTVA = obtenirTauxTVAFacture(factureEditee);
+    const totalTVA = arrondir2(totalHT * tauxTVA);
+    const totalTTC = arrondir2(totalHT + totalTVA);
     
     setFactureEditee({
       ...factureEditee,
@@ -326,6 +432,199 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
       },
     });
   }, [factureEditee]);
+
+  // Autosave brouillon (facture + lignes manuelles)
+  useEffect(() => {
+    if (!factureEditee && !lignesManuelles.trim()) return;
+    if (draftTimerRef.current) {
+      window.clearTimeout(draftTimerRef.current);
+    }
+    draftTimerRef.current = window.setTimeout(() => {
+      try {
+        localStorage.setItem(
+          draftKey,
+          JSON.stringify({
+            factureEditee,
+            lignesManuelles,
+            savedAt: new Date().toISOString(),
+          })
+        );
+        localStorage.setItem('editeur-parsing-draft-last-key', draftKey);
+        setDraftInfo({ exists: true, savedAt: new Date() });
+        setDraftGlobalInfo({ exists: true, savedAt: new Date() });
+      } catch {
+        // ignorer
+      }
+    }, 400);
+    return () => {
+      if (draftTimerRef.current) {
+        window.clearTimeout(draftTimerRef.current);
+      }
+    };
+  }, [factureEditee, lignesManuelles, draftKey]);
+
+  useEffect(() => {
+    try {
+      const dernierKey = localStorage.getItem('editeur-parsing-draft-last-key');
+      if (!dernierKey) {
+        setDraftGlobalInfo({ exists: false });
+        return;
+      }
+      const brut = localStorage.getItem(dernierKey);
+      if (!brut) {
+        setDraftGlobalInfo({ exists: false });
+        return;
+      }
+      const parsed = JSON.parse(brut);
+      const savedAt = parsed?.savedAt ? new Date(parsed.savedAt) : undefined;
+      setDraftGlobalInfo({ exists: true, savedAt });
+    } catch {
+      setDraftGlobalInfo({ exists: false });
+    }
+  }, []);
+
+  const handleExporterCSV = useCallback(() => {
+    if (!factureEditee) return;
+    const nom = `facture-${factureEditee.numero}-${factureEditee.fournisseur}`;
+    telechargerCSVSimple(nom, lignesExport);
+  }, [factureEditee, lignesExport]);
+
+  const appliquerLignesManuelles = useCallback(() => {
+    if (!factureEditee) return;
+    if (!lignesManuelles.trim()) return;
+
+    const moneyRe = /\d{1,3}(?:\s\d{3})*,\d{2}/g;
+    const intRe = /\d{1,3}(?:\s\d{3})*/g;
+    const normaliserNombre = (valeur: string) =>
+      parseFloat(valeur.replace(/\s/g, '').replace(',', '.'));
+    const normaliserReference = (ref: string) => {
+      const propre = ref.trim();
+      if (propre === 'TAFARWA') return 'FTAFARWA';
+      return propre;
+    };
+    const normaliserDescription = (description: string) =>
+      description.replace(/\s+/g, ' ').replace(/\s+$/, '').trim();
+
+    const lignesNettoyees = lignesManuelles
+      .split(/\n+/g)
+      .map((l) => l.trim())
+      .filter(Boolean);
+
+    const nouvellesLignes: LigneProduit[] = [];
+
+    lignesNettoyees.forEach((ligne) => {
+      if (/^ref\t|^nom\t|^qte facture\t|^pu ht/i.test(ligne.replace(/\s+/g, ' '))) {
+        return;
+      }
+      if (/^\s*$/.test(ligne)) return;
+
+      const colonnes = ligne.split('\t').map((c) => c.trim()).filter((c) => c.length > 0);
+      if (colonnes.length >= 4) {
+        const ref = normaliserReference(colonnes[0]);
+        const description = normaliserDescription(colonnes[1]);
+        const quantite = normaliserNombre(colonnes[2]);
+        const prixUnitaireHT = normaliserNombre(colonnes[3]);
+
+        if (!ref || !description || Number.isNaN(quantite) || Number.isNaN(prixUnitaireHT)) {
+          return;
+        }
+
+        nouvellesLignes.push({
+          refFournisseur: ref,
+          description,
+          quantite,
+          prixUnitaireHT: arrondir2(prixUnitaireHT),
+          remise: 0,
+          montantHT: arrondir2(quantite * prixUnitaireHT),
+        });
+        return;
+      }
+
+      const segments = ligne
+        .split('/')
+        .map((segment) => segment.replace(/\s+/g, ' ').trim())
+        .filter(Boolean);
+
+      segments.forEach((segment) => {
+        const ref = normaliserReference(segment.split(' ')[0] || '');
+        if (!ref) return;
+
+        const reste = segment.slice(ref.length).trim();
+        if (!reste) return;
+
+        const moneyMatches = Array.from(reste.matchAll(moneyRe)).map((m) => ({
+          index: m.index || 0,
+          valeur: parseFloat(m[0].replace(/\s/g, '').replace(',', '.')),
+        })).filter((m) => !Number.isNaN(m.valeur));
+
+        if (moneyMatches.length === 0) return;
+        const montantMatch = moneyMatches[moneyMatches.length - 1];
+
+        const intMatches = Array.from(reste.matchAll(intRe)).map((m) => {
+          const index = m.index || 0;
+          const fin = index + m[0].length;
+          const suivant = reste[fin] || '';
+          return {
+            index,
+            valeur: parseFloat(m[0].replace(/\s/g, '')),
+            skip: suivant === ',',
+          };
+        }).filter((m) => !Number.isNaN(m.valeur) && !m.skip && m.index < montantMatch.index);
+
+        if (intMatches.length === 0) return;
+        const quantiteMatch = intMatches[intMatches.length - 1];
+
+        const description = normaliserDescription(reste.slice(0, quantiteMatch.index));
+        if (!description) return;
+
+        const prixUnitaireCandidat = moneyMatches.length > 1
+          ? moneyMatches[moneyMatches.length - 2].valeur
+          : undefined;
+
+        const montantHT = montantMatch.valeur;
+        const quantite = quantiteMatch.valeur;
+        const prixUnitaireHT = prixUnitaireCandidat !== undefined
+          ? prixUnitaireCandidat
+          : quantite > 0
+            ? arrondir2(montantHT / quantite)
+            : 0;
+
+        nouvellesLignes.push({
+          refFournisseur: ref,
+          description,
+          quantite,
+          prixUnitaireHT: arrondir2(prixUnitaireHT),
+          remise: 0,
+          montantHT: arrondir2(montantHT),
+        });
+      });
+    });
+
+    if (nouvellesLignes.length === 0) {
+      setErreurs(['Aucune ligne valide trouvée dans la saisie manuelle.']);
+      return;
+    }
+
+    const totalHT = arrondir2(nouvellesLignes.reduce((sum, l) => sum + l.montantHT, 0));
+    const tauxTVA = obtenirTauxTVAFacture(factureEditee);
+    const totalTVA = arrondir2(totalHT * tauxTVA);
+    const totalTTC = arrondir2(totalHT + totalTVA);
+
+    setFactureEditee({
+      ...factureEditee,
+      lignes: nouvellesLignes,
+      totalHT,
+      totalTVA,
+      totalTTC,
+      donneesBrutes: {
+        ...(factureEditee.donneesBrutes || {}),
+        tauxTVA,
+      },
+    });
+    setModeEdition(true);
+    setMessageSucces(`Lignes manuelles appliquées (${nouvellesLignes.length}).`);
+    setTimeout(() => setMessageSucces(''), 3000);
+  }, [factureEditee, lignesManuelles]);
 
   const appliquerChampEnFocus = useCallback(() => {
     if (!champEnFocus || !factureEditee) {
@@ -398,13 +697,10 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
     };
     
     const nouvellesLignes = [...factureEditee.lignes, nouvelleLigne];
-    const totalHT = nouvellesLignes.reduce((sum, l) => sum + l.montantHT, 0);
-    const tauxTVA =
-      factureEditee.donneesBrutes && typeof factureEditee.donneesBrutes.tauxTVA === 'number'
-        ? factureEditee.donneesBrutes.tauxTVA
-        : TAUX_TVA_PAR_DEFAUT;
-    const totalTVA = Math.round(totalHT * tauxTVA * 100) / 100;
-    const totalTTC = totalHT + totalTVA;
+    const totalHT = arrondir2(nouvellesLignes.reduce((sum, l) => sum + l.montantHT, 0));
+    const tauxTVA = obtenirTauxTVAFacture(factureEditee);
+    const totalTVA = arrondir2(totalHT * tauxTVA);
+    const totalTTC = arrondir2(totalHT + totalTVA);
     
     setFactureEditee({
       ...factureEditee,
@@ -423,13 +719,10 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
     if (!factureEditee) return;
 
     const nouvellesLignes = factureEditee.lignes.filter((_, i) => i !== index);
-    const totalHT = nouvellesLignes.reduce((sum, l) => sum + l.montantHT, 0);
-    const tauxTVA =
-      factureEditee.donneesBrutes && typeof factureEditee.donneesBrutes.tauxTVA === 'number'
-        ? factureEditee.donneesBrutes.tauxTVA
-        : TAUX_TVA_PAR_DEFAUT;
-    const totalTVA = Math.round(totalHT * tauxTVA * 100) / 100;
-    const totalTTC = totalHT + totalTVA;
+    const totalHT = arrondir2(nouvellesLignes.reduce((sum, l) => sum + l.montantHT, 0));
+    const tauxTVA = obtenirTauxTVAFacture(factureEditee);
+    const totalTVA = arrondir2(totalHT * tauxTVA);
+    const totalTTC = arrondir2(totalHT + totalTVA);
     
     setFactureEditee({
       ...factureEditee,
@@ -460,133 +753,120 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
   return (
     <div className="editeur-parsing">
       <div className="editeur-parsing__header">
-        <h2>Éditeur de parsing</h2>
+        <h2>Contrôle avant import</h2>
         <p className="editeur-parsing__description">
-          Testez et ajustez le parsing d'un document avant l'import
+          Vérifiez, corrigez et validez une facture avant son enregistrement, sans perdre les règles
+          de parsing déjà apprises.
         </p>
       </div>
 
-      <div className="editeur-parsing__controls">
-        <div className="editeur-parsing__file-select">
-          <label htmlFor="fichier-parsing" className="editeur-parsing__label">
-            <FileText size={20} />
-            Sélectionner un fichier PDF
-          </label>
-          <input
-            id="fichier-parsing"
-            type="file"
-            accept=".pdf"
-            onChange={handleFichierChange}
-            className="editeur-parsing__input"
-          />
-          {fichier && (
-            <span className="editeur-parsing__filename">{fichier.name}</span>
-          )}
+      <div className="editeur-parsing__intro-grid">
+        <div className="editeur-parsing__intro-card">
+          <strong>Étape 1</strong>
+          <span>Choisissez un PDF et le fournisseur pour lancer le parsing.</span>
         </div>
+        <div className="editeur-parsing__intro-card">
+          <strong>Étape 2</strong>
+          <span>Corrigez les lignes, les montants ou les réceptions avant import.</span>
+        </div>
+        <div className="editeur-parsing__intro-card">
+          <strong>Étape 3</strong>
+          <span>Importez la facture finale sans perdre les apprentissages précédents.</span>
+        </div>
+      </div>
 
-        <div className="editeur-parsing__fournisseur-select">
-          <label htmlFor="fournisseur-parsing" className="editeur-parsing__label">
-            Fournisseur
-          </label>
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-end' }}>
-            <select
-              id="fournisseur-parsing"
-              value={fournisseur}
-              onChange={(e) => setFournisseur(e.target.value as Fournisseur)}
-              className="editeur-parsing__select"
-              disabled={!fichier}
-              style={{ flex: 1 }}
-            >
-              <option value="">Sélectionner un fournisseur</option>
-              {tousLesFournisseurs.map(f => (
-                <option key={f} value={f}>{f}</option>
-              ))}
-            </select>
-            <button
-              type="button"
-              onClick={() => setAfficherAjoutFournisseur(!afficherAjoutFournisseur)}
-              className="editeur-parsing__btn-add-fournisseur"
-              title="Ajouter un nouveau fournisseur"
-              style={{
-                padding: '0.5rem',
-                border: '1px solid #3b82f6',
-                borderRadius: '6px',
-                background: 'white',
-                color: '#3b82f6',
-                cursor: 'pointer',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-              }}
-            >
-              <Plus size={18} />
-            </button>
+      <div className="editeur-parsing__workspace">
+        <div className="editeur-parsing__controls">
+          <div className="editeur-parsing__file-select">
+            <label htmlFor="fichier-parsing" className="editeur-parsing__label">
+              <FileText size={20} />
+              Fichier PDF
+            </label>
+            <input
+              id="fichier-parsing"
+              type="file"
+              accept=".pdf"
+              onChange={handleFichierChange}
+              className="editeur-parsing__input"
+            />
+            {fichier && (
+              <span className="editeur-parsing__filename">{fichier.name}</span>
+            )}
           </div>
-          {afficherAjoutFournisseur && (
-            <div style={{ marginTop: '0.5rem', padding: '0.75rem', background: '#f3f4f6', borderRadius: '6px' }}>
-              <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                <input
-                  type="text"
-                  value={nouveauFournisseur}
-                  onChange={(e) => setNouveauFournisseur(e.target.value)}
-                  placeholder="Nom du nouveau fournisseur"
-                  className="editeur-parsing__input"
-                  style={{ flex: 1 }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      handleAjouterFournisseur();
-                    }
-                  }}
-                />
-                <button
-                  type="button"
-                  onClick={handleAjouterFournisseur}
-                  disabled={!nouveauFournisseur.trim()}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    border: 'none',
-                    borderRadius: '6px',
-                    background: '#3b82f6',
-                    color: 'white',
-                    cursor: nouveauFournisseur.trim() ? 'pointer' : 'not-allowed',
-                    opacity: nouveauFournisseur.trim() ? 1 : 0.5,
-                  }}
-                >
-                  Ajouter
-                </button>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setAfficherAjoutFournisseur(false);
-                    setNouveauFournisseur('');
-                  }}
-                  style={{
-                    padding: '0.5rem',
-                    border: '1px solid #dc3545',
-                    borderRadius: '6px',
-                    background: 'white',
-                    color: '#dc3545',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                  }}
-                >
-                  <X size={16} />
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
 
-        <button
-          type="button"
-          onClick={handleParser}
-          disabled={!fichier || !fournisseur || enCours}
-          className="editeur-parsing__btn-parser"
-        >
-          {enCours ? 'Parsing...' : 'Parser le document'}
-        </button>
+          <div className="editeur-parsing__fournisseur-select">
+            <label htmlFor="fournisseur-parsing" className="editeur-parsing__label">
+              Fournisseur
+            </label>
+            <div className="editeur-parsing__fournisseur-row">
+              <select
+                id="fournisseur-parsing"
+                value={fournisseur}
+                onChange={(e) => setFournisseur(e.target.value as Fournisseur)}
+                className="editeur-parsing__select"
+                disabled={!fichier}
+              >
+                <option value="">Sélectionner un fournisseur</option>
+                {tousLesFournisseurs.map(f => (
+                  <option key={f} value={f}>{f}</option>
+                ))}
+              </select>
+              <button
+                type="button"
+                onClick={() => setAfficherAjoutFournisseur(!afficherAjoutFournisseur)}
+                className="editeur-parsing__btn-add-fournisseur"
+                title="Ajouter un nouveau fournisseur"
+              >
+                <Plus size={18} />
+              </button>
+            </div>
+            {afficherAjoutFournisseur && (
+              <div className="editeur-parsing__inline-panel">
+                <div className="editeur-parsing__inline-actions">
+                  <input
+                    type="text"
+                    value={nouveauFournisseur}
+                    onChange={(e) => setNouveauFournisseur(e.target.value)}
+                    placeholder="Nom du nouveau fournisseur"
+                    className="editeur-parsing__input"
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        handleAjouterFournisseur();
+                      }
+                    }}
+                  />
+                  <button
+                    type="button"
+                    onClick={handleAjouterFournisseur}
+                    disabled={!nouveauFournisseur.trim()}
+                    className="editeur-parsing__btn-inline-primary"
+                  >
+                    Ajouter
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setAfficherAjoutFournisseur(false);
+                      setNouveauFournisseur('');
+                    }}
+                    className="editeur-parsing__btn-inline-danger"
+                  >
+                    <X size={16} />
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <button
+            type="button"
+            onClick={handleParser}
+            disabled={!fichier || !fournisseur || enCours}
+            className="editeur-parsing__btn-parser"
+          >
+            {enCours ? 'Parsing...' : 'Lancer le parsing'}
+          </button>
+        </div>
       </div>
 
       {erreurs.length > 0 && (
@@ -626,7 +906,12 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
       {factureEditee && (
         <div className="editeur-parsing__preview">
           <div className="editeur-parsing__preview-header">
-            <h3>Prévisualisation de la facture</h3>
+            <div>
+              <h3>Fiche de contrôle de la facture</h3>
+              <p className="editeur-parsing__preview-subtitle">
+                Vérifiez les informations clés, puis passez en édition si une correction est nécessaire.
+              </p>
+            </div>
             <div className="editeur-parsing__preview-actions">
               {!modeEdition ? (
                 <button
@@ -666,6 +951,78 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                 <Upload size={16} />
                 Importer
               </button>
+              <button
+                type="button"
+                onClick={handleExporterCSV}
+                className="editeur-parsing__btn-import"
+                disabled={!factureEditee}
+                title="Exporter la facture (CSV)"
+              >
+                Exporter Excel (CSV)
+              </button>
+              {draftInfo.exists && (
+                <>
+                  <button
+                    type="button"
+                    onClick={restaurerBrouillon}
+                    className="editeur-parsing__btn-cancel"
+                    title="Restaurer le brouillon"
+                  >
+                    Restaurer brouillon
+                  </button>
+                  <button
+                    type="button"
+                    onClick={effacerBrouillon}
+                    className="editeur-parsing__btn-cancel"
+                    title="Effacer le brouillon"
+                  >
+                    Effacer brouillon
+                  </button>
+                </>
+              )}
+              {draftGlobalInfo.exists && (
+                <button
+                  type="button"
+                  onClick={restaurerDernierBrouillonGlobal}
+                  className="editeur-parsing__btn-cancel"
+                  title="Restaurer le dernier brouillon global"
+                >
+                  Restaurer dernier brouillon
+                </button>
+              )}
+            </div>
+          </div>
+
+          <div className="editeur-parsing__editor-block" style={{ marginTop: '0.75rem' }}>
+            <div className="editeur-parsing__info-item" style={{ width: '100%' }}>
+              <strong>Ajouter ou remplacer des lignes manuellement</strong>
+              <div style={{ marginTop: '0.5rem' }}>
+                <textarea
+                  value={lignesManuelles}
+                  onChange={(e) => setLignesManuelles(e.target.value)}
+                  placeholder="Collez ici des lignes au format : REF DESIGNATION QTE MONTANT (ex: LOUNGETXTR16T1C1 FLUTE LOUNGE 16CL TRITAN 500 1 225,00)"
+                  rows={8}
+                  style={{ width: '100%', padding: '0.5rem', fontSize: '0.9rem', minHeight: '160px' }}
+                />
+              </div>
+              <div style={{ marginTop: '0.5rem', display: 'flex', gap: '0.5rem' }}>
+                <button
+                  type="button"
+                  onClick={appliquerLignesManuelles}
+                  className="editeur-parsing__btn-save"
+                  disabled={!lignesManuelles.trim()}
+                >
+                  Appliquer les lignes
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setLignesManuelles('')}
+                  className="editeur-parsing__btn-cancel"
+                  disabled={!lignesManuelles.trim()}
+                >
+                  Effacer
+                </button>
+              </div>
             </div>
           </div>
 
@@ -713,23 +1070,37 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                 <input
                   type="number"
                   step="0.01"
-                  value={factureEditee.totalHT}
+                  value={factureEditee.totalHT.toFixed(2)}
                   onChange={(e) => {
                     const valeur = parseFloat(e.target.value);
                     setFactureEditee(prev => {
                       if (!prev) return prev;
-                      const totalHT = Number.isNaN(valeur) ? 0 : valeur;
+                      const totalHT = Number.isNaN(valeur) ? 0 : arrondir2(valeur);
+                      const tauxTVA = obtenirTauxTVAFacture(prev);
+                      const totalTVA = arrondir2(totalHT * tauxTVA);
                       return {
                         ...prev,
                         totalHT,
-                        totalTTC: totalHT + prev.totalTVA,
+                        totalTVA,
+                        totalTTC: arrondir2(totalHT + totalTVA),
+                        donneesBrutes: {
+                          ...(prev.donneesBrutes || {}),
+                          tauxTVA,
+                        },
                       };
                     });
                   }}
                   className="editeur-parsing__input-info"
                 />
               ) : (
-                <span>{factureEditee.totalHT.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}</span>
+                <span>
+                  {factureEditee.totalHT.toLocaleString('fr-FR', {
+                    style: 'currency',
+                    currency: 'EUR',
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
+                  })}
+                </span>
               )}
             </div>
             <div className="editeur-parsing__info-item">
@@ -747,13 +1118,8 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                       const remise = Number.isNaN(valeur) ? 0 : valeur;
                       const netHT = totalHTBrut - remise;
 
-                      // Recalculer la TVA à partir du rapport TVA/HT initial
-                      const baseHT = prev.donneesBrutes && typeof prev.donneesBrutes.totalHTBrut === 'number'
-                        ? prev.donneesBrutes.totalHTBrut
-                        : prev.totalHT;
-                      const baseTVA = prev.totalTVA;
-                      const ratioTVA = baseHT > 0 ? baseTVA / baseHT : 0;
-                      const totalTVA = Math.round(netHT * ratioTVA * 100) / 100;
+                      const tauxTVA = obtenirTauxTVAFacture(prev);
+                      const totalTVA = Math.round(netHT * tauxTVA * 100) / 100;
                       const totalTTC = netHT + totalTVA;
 
                       return {
@@ -766,6 +1132,7 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                           totalHTBrut,
                           remise,
                           netHT,
+                          tauxTVA,
                         },
                       };
                     });
@@ -791,18 +1158,29 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
               </span>
             </div>
             <div className="editeur-parsing__info-item">
+              <strong>Total TVA :</strong>
+              <span>
+                {factureEditee.totalTVA.toLocaleString('fr-FR', {
+                  style: 'currency',
+                  currency: 'EUR',
+                  minimumFractionDigits: 2,
+                  maximumFractionDigits: 2,
+                })}
+              </span>
+            </div>
+            <div className="editeur-parsing__info-item">
               <strong>Total TTC :</strong>
               {modeEdition ? (
                 <input
                   type="number"
                   step="0.01"
-                  value={factureEditee.totalTTC}
+                  value={factureEditee.totalTTC.toFixed(2)}
                   onChange={(e) => {
                     const valeur = parseFloat(e.target.value);
                     setFactureEditee(prev => {
                       if (!prev) return prev;
-                      const totalTTC = Number.isNaN(valeur) ? 0 : valeur;
-                      const totalTVA = Math.max(0, totalTTC - prev.totalHT);
+                      const totalTTC = Number.isNaN(valeur) ? 0 : arrondir2(valeur);
+                      const totalTVA = Math.max(0, arrondir2(totalTTC - prev.totalHT));
                       return {
                         ...prev,
                         totalTVA,
@@ -817,6 +1195,8 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                   {factureEditee.totalTTC.toLocaleString('fr-FR', {
                     style: 'currency',
                     currency: 'EUR',
+                    minimumFractionDigits: 2,
+                    maximumFractionDigits: 2,
                   })}
                 </span>
               )}
@@ -824,7 +1204,7 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
           </div>
 
           {historiqueSauvegardes.length > 0 && (
-            <div className="editeur-parsing__facture-info" style={{ marginTop: '1rem' }}>
+            <div className="editeur-parsing__editor-block" style={{ marginTop: '1rem' }}>
               <div className="editeur-parsing__info-item">
                 <strong>Dernières sauvegardes</strong>
               </div>
@@ -908,6 +1288,7 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                             className="editeur-parsing__input-cell"
                             style={{
                               width: '100%',
+                              minWidth: '140px',
                               cursor: 'pointer',
                               backgroundColor: '#f8f9fa',
                             }}
@@ -917,7 +1298,7 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                         <td>
                             <input
                               type="text"
-                              value={ligne.description.length > 50 ? ligne.description.substring(0, 50) + '...' : ligne.description}
+                              value={ligne.description}
                               onClick={(e) => {
                                 e.stopPropagation();
                                 console.log('[EDITEUR] Clic sur description, ouverture modal', { index, description: ligne.description });
@@ -927,10 +1308,11 @@ export function EditeurParsing({ onImporter, fichierInitial, fournisseurInitial 
                               className="editeur-parsing__input-cell"
                               style={{
                                 width: '100%',
+                                minWidth: '360px',
                                 cursor: 'pointer',
                                 backgroundColor: '#f8f9fa',
                               }}
-                              title={`Cliquez pour éditer le contenu complet (${ligne.description.length} caractères)`}
+                              title={`Cliquez pour éditer (${ligne.description.length} caractères)`}
                             />
                         </td>
                         <td>

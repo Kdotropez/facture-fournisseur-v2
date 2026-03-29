@@ -54,6 +54,11 @@
   text-transform: uppercase;
 }
 
+.details-facture__badge--secondary {
+  background: #eef2ff;
+  color: #4338ca;
+}
+
 .details-facture__numero {
   font-size: 1.1rem;
   font-weight: 600;
@@ -105,6 +110,36 @@
   display: flex;
   flex-direction: column;
   gap: 2rem;
+}
+
+.details-facture__summary-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 1rem;
+}
+
+.details-facture__summary-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  padding: 1rem 1.1rem;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+}
+
+.details-facture__summary-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  color: #6b7280;
+}
+
+.details-facture__summary-value {
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #111827;
 }
 
 .details-facture__alert {
@@ -222,6 +257,8 @@
   width: 100%;
   border-collapse: collapse;
   font-size: 0.9rem;
+  table-layout: auto;
+  min-width: 1200px;
 }
 
 .details-facture__table thead {
@@ -256,6 +293,8 @@
   font-weight: 500;
   color: #3b82f6;
   white-space: nowrap;
+  min-width: 220px;
+  width: 220px;
 }
 
 .details-facture__cell-description {

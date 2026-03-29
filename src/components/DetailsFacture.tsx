@@ -2,10 +2,12 @@
  * Composant d'affichage des détails d'une facture
  */
 
-import { useState, useEffect } from 'react';
-import { X, FileText, Calendar, Building2, Hash, AlertTriangle, CheckCircle, Edit, Plus, Trash2, Printer, Download } from 'lucide-react';
+import { useState, useEffect, useMemo, useRef } from 'react';
+import { X, FileText, Calendar, Building2, Hash, AlertTriangle, CheckCircle, Edit, Plus, Trash2, Printer, Download, RefreshCcw } from 'lucide-react';
 import type { Facture, LigneProduit } from '../types/facture';
-import { obtenirFournisseurs } from '@parsers/index';
+import { obtenirFournisseurs, parserFacture } from '@parsers/index';
+import { listerFacturesSauvegardes, rechercherFactureDansSauvegardes } from '../services/factureService';
+import { obtenirFactureMemorisee } from '../services/parsingRulesService';
 import { obtenirReglementsFacture } from '../services/reglementService';
 import { imprimerPdfSimple, telechargerCSVSimple } from '../utils/exportSimplifie';
 import './DetailsFacture.css';
@@ -17,8 +19,47 @@ interface DetailsFactureProps {
   onDelete?: (factureId: string) => void;
 }
 
+const fournisseurSansTVA = (facture: Facture | null): boolean =>
+  !!facture && facture.fournisseur === 'ITALESSE';
+
+const normaliserFactureSansTVA = (facture: Facture): Facture => {
+  const totalHT = arrondir2(facture.totalHT || 0);
+  return {
+    ...facture,
+    totalTVA: 0,
+    totalTTC: totalHT,
+    donneesBrutes: {
+      ...(facture.donneesBrutes || {}),
+      totalHTBrut:
+        facture.donneesBrutes && typeof facture.donneesBrutes.totalHTBrut === 'number'
+          ? facture.donneesBrutes.totalHTBrut
+          : totalHT,
+      netHT: totalHT,
+      tauxTVA: 0,
+    },
+  };
+};
+
 export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: DetailsFactureProps) {
   const [editionMode, setEditionMode] = useState(false);
+  const [reparseEnCours, setReparseEnCours] = useState(false);
+  useEffect(() => {
+    if (!facture || !onUpdate || !fournisseurSansTVA(facture)) return;
+
+    const totalHT = arrondir2(facture.totalHT || 0);
+    const tauxTVAStocke =
+      facture.donneesBrutes && typeof facture.donneesBrutes.tauxTVA === 'number'
+        ? facture.donneesBrutes.tauxTVA
+        : undefined;
+    const doitNormaliser =
+      Math.abs((facture.totalTVA || 0)) > 0.005 ||
+      Math.abs((facture.totalTTC || 0) - totalHT) > 0.005 ||
+      (typeof tauxTVAStocke === 'number' && Math.abs(tauxTVAStocke) > 0.0001);
+
+    if (!doitNormaliser) return;
+
+    onUpdate(normaliserFactureSansTVA(facture));
+  }, [facture, onUpdate]);
   if (!facture) {
     return (
       <div className="details-facture details-facture--empty">
@@ -62,15 +103,249 @@ export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: Details
     const titre = `Facture ${facture.numero} — ${facture.fournisseur}`;
     const meta = [
       `Date facture: ${formaterDate(facture.date)}`,
-      `Total TTC: ${formaterMontant(facture.totalTTC)}`,
+      `Total TTC: ${formaterMontant(totalTTCAffiche)}`,
     ];
     imprimerPdfSimple(titre, meta, lignesExport);
   };
 
+  const handleImprimerFactureComplete = () => {
+    const fenetre = window.open('', '_blank', 'width=1200,height=800');
+    if (!fenetre) return;
+    const formaterLibelleReglementImpression = (type: string, statut: string, notes?: string) => {
+      if (notes && notes.trim()) return notes.trim();
+      if (statut === 'en_attente') {
+        if (type === 'acompte') return 'Echeance acompte';
+        if (type === 'solde') return 'Echeance solde';
+        return 'Echeance';
+      }
+      if (type === 'acompte') return 'Acompte';
+      if (type === 'solde') return 'Solde';
+      if (type === 'reglement_complet') return 'Paiement complet';
+      if (type === 'avoir') return 'Avoir';
+      return 'Reglement';
+    };
+
+    const lignesHTML = facture.lignes
+      .map(
+        (ligne) => `
+          <tr>
+            <td class="refCell">${ligne.refFournisseur || '-'}</td>
+            <td class="descCell">${ligne.description || ''}</td>
+            <td>${ligne.bat || '-'}</td>
+            <td>${ligne.logo || '-'}</td>
+            <td>${ligne.couleur || '-'}</td>
+            <td class="num">${ligne.quantite ?? ''}</td>
+            <td class="num">${formaterMontant(ligne.prixUnitaireHT || 0)}</td>
+            <td class="num">${formaterMontant(ligne.remise || 0)}</td>
+            <td class="num strong">${formaterMontant(ligne.montantHT || 0)}</td>
+          </tr>
+        `
+      )
+      .join('');
+
+    const reglementsHTML =
+      reglements.length > 0
+        ? `
+          <div class="section">
+            <h2>Règlements</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th>Date</th>
+                  <th>Libellé</th>
+                  <th>Statut</th>
+                  <th>Montant</th>
+                </tr>
+              </thead>
+              <tbody>
+            ${[...reglements]
+              .sort((a, b) => new Date(a.dateReglement).getTime() - new Date(b.dateReglement).getTime())
+              .map(
+                (r) => `<tr>
+                  <td>${new Intl.DateTimeFormat('fr-FR', {
+                    day: '2-digit',
+                    month: '2-digit',
+                    year: 'numeric',
+                  }).format(r.dateEcheance || r.dateReglement)}</td>
+                  <td>${formaterLibelleReglementImpression(r.type, r.statut, r.notes)}</td>
+                  <td>${r.statut === 'en_attente' ? 'En attente' : r.statut === 'paye' ? 'Payé' : r.statut}</td>
+                  <td class="num">${formaterMontant(r.montant)}</td>
+                </tr>`
+              )
+              .join('')}
+              </tbody>
+            </table>
+          </div>
+        `
+        : '';
+
+    fenetre.document.write(`
+      <html>
+        <head>
+          <title>Facture ${facture.numero}</title>
+          <style>
+            @page { size: A4 portrait; margin: 12mm; }
+            body { font-family: Arial, sans-serif; color: #111; margin: 0; }
+            h1 { font-size: 22px; margin: 0 0 8px; }
+            h2 { font-size: 16px; margin: 0 0 10px; }
+            .header { margin-bottom: 18px; padding-bottom: 10px; border-bottom: 2px solid #ddd; }
+            .badges { margin-top: 6px; font-size: 13px; color: #444; }
+            .section { margin-top: 18px; break-inside: avoid; }
+            .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 16px; }
+            .meta-row { font-size: 13px; margin-bottom: 4px; }
+            table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+            th, td { border: 1px solid #ddd; padding: 6px 7px; font-size: 11px; vertical-align: top; }
+            th { background: #f3f4f6; text-align: left; }
+            td.num { text-align: right; white-space: nowrap; }
+            td.strong { font-weight: 700; }
+            .ref { width: 22%; text-align: left; }
+            .desc { width: 26%; text-align: left; }
+            .small { width: 8%; }
+            .numCol { width: 9%; }
+            .refCell { text-align: left; white-space: nowrap; font-family: Consolas, monospace; min-width: 220px; }
+            .descCell { text-align: left; word-break: break-word; }
+            .totaux { margin-top: 16px; margin-left: auto; width: 360px; }
+            .totaux-row { display: flex; justify-content: space-between; padding: 6px 0; border-bottom: 1px solid #eee; }
+            .totaux-row.final { font-weight: 700; font-size: 16px; border-top: 2px solid #111; margin-top: 6px; padding-top: 10px; }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>Facture ${facture.numero}</h1>
+            <div class="badges">${facture.fournisseur}</div>
+          </div>
+
+          <div class="section">
+            <h2>Informations générales</h2>
+            <div class="grid">
+              <div class="meta-row"><strong>Fournisseur :</strong> ${facture.fournisseur}</div>
+              <div class="meta-row"><strong>Numéro :</strong> ${facture.numero}</div>
+              <div class="meta-row"><strong>Date facture :</strong> ${formaterDate(facture.date)}</div>
+              <div class="meta-row"><strong>Date livraison :</strong> ${facture.dateLivraison ? formaterDate(facture.dateLivraison) : '-'}</div>
+              <div class="meta-row"><strong>Fichier PDF :</strong> ${facture.fichierPDF ? facture.fichierPDF.split(/[/\\]/).pop() : '-'}</div>
+            </div>
+          </div>
+
+          <div class="section">
+            <h2>Lignes de produits (${facture.lignes.length})</h2>
+            <table>
+              <thead>
+                <tr>
+                  <th class="ref">Réf.</th>
+                  <th class="desc">Description</th>
+                  <th class="small">BAT</th>
+                  <th class="small">Logo</th>
+                  <th class="small">Couleur</th>
+                  <th class="numCol">Qté</th>
+                  <th class="numCol">PU HT</th>
+                  <th class="numCol">Remise</th>
+                  <th class="numCol">Montant HT</th>
+                </tr>
+              </thead>
+              <tbody>
+                ${lignesHTML}
+              </tbody>
+            </table>
+          </div>
+
+          ${reglementsHTML}
+
+          <div class="totaux">
+            <div class="totaux-row"><span>Total HT</span><span>${formaterMontant(facture.totalHT)}</span></div>
+            <div class="totaux-row"><span>Total TVA</span><span>${formaterMontant(totalTVAAffiche)}</span></div>
+            <div class="totaux-row"><span>Total réglé</span><span>${formaterMontant(totalRegle)}</span></div>
+            <div class="totaux-row"><span>Reste à régler</span><span>${formaterMontant(resteARegler)}</span></div>
+            <div class="totaux-row final"><span>Total TTC</span><span>${formaterMontant(totalTTCAffiche)}</span></div>
+          </div>
+        </body>
+      </html>
+    `);
+
+    fenetre.document.close();
+    fenetre.focus();
+    fenetre.print();
+  };
+
+  const dataUrlToFile = (dataUrl: string, filename: string): File => {
+    const [meta, base64] = dataUrl.split(',');
+    const mimeMatch = meta?.match(/data:(.*?);base64/);
+    const mime = mimeMatch?.[1] || 'application/pdf';
+    const binaire = atob(base64 || '');
+    const bytes = new Uint8Array(binaire.length);
+    for (let i = 0; i < binaire.length; i += 1) {
+      bytes[i] = binaire.charCodeAt(i);
+    }
+    return new File([bytes], filename, { type: mime });
+  };
+
+  const handleReparserDepuisPdf = async () => {
+    if (!onUpdate) return;
+    if (!facture.pdfOriginal) {
+      window.alert('Aucun PDF original n’est disponible pour reparser cette facture.');
+      return;
+    }
+    const confirmer = window.confirm(
+      'Reparser la facture depuis le PDF ?\n\n' +
+        'Cela remplacera les lignes actuelles.'
+    );
+    if (!confirmer) return;
+    setReparseEnCours(true);
+    try {
+      const nom = facture.fichierPDF || `${facture.numero || facture.id}.pdf`;
+      const fichier = dataUrlToFile(facture.pdfOriginal, nom);
+      const resultat = await parserFacture(fichier, facture.fournisseur);
+      if (!resultat.facture) {
+        window.alert('Reparsing échoué : aucune facture extraite.');
+        return;
+      }
+      const factureReparsee: Facture = {
+        ...resultat.facture,
+        id: facture.id,
+        dateImport: facture.dateImport,
+        fichierPDF: facture.fichierPDF ?? nom,
+        pdfOriginal: facture.pdfOriginal,
+      };
+      onUpdate(factureReparsee);
+      if (resultat.erreurs && resultat.erreurs.length > 0) {
+        window.alert(`Reparsing avec avertissements : ${resultat.erreurs.join(', ')}`);
+      }
+    } catch (error) {
+      window.alert(
+        `Impossible de reparser le PDF : ${
+          error instanceof Error ? error.message : 'Erreur inconnue'
+        }`
+      );
+    } finally {
+      setReparseEnCours(false);
+    }
+  };
+
   const totalHTLignes = facture.lignes.reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0);
   const reglements = obtenirReglementsFacture(facture.id);
-  const totalRegle = reglements.reduce((sum, r) => sum + (r.montant || 0), 0);
-  const resteARegler = Math.max(0, (facture.totalTTC || 0) - totalRegle);
+  const reglementsPayes = reglements.filter((r) => r.statut === 'paye' || r.statut === 'partiel');
+  const reglementsEnAttente = reglements.filter((r) => r.statut === 'en_attente');
+  const totalRegle = reglementsPayes.reduce((sum, r) => sum + (r.montant || 0), 0);
+  const totalEnAttente = reglementsEnAttente.reduce((sum, r) => sum + (r.montant || 0), 0);
+  const totalTVAAffiche = fournisseurSansTVA(facture) ? 0 : (facture.totalTVA || 0);
+  const totalTTCAffiche = fournisseurSansTVA(facture)
+    ? arrondir2(facture.totalHT || 0)
+    : (facture.totalTTC || 0);
+  const resteARegler = Math.max(0, totalTTCAffiche - totalRegle);
+  const libelleTypePiece = 'Facture fournisseur';
+  const formaterLibelleReglement = (type: string, statut: string, notes?: string) => {
+    if (notes && notes.trim()) return notes.trim();
+    if (statut === 'en_attente') {
+      if (type === 'acompte') return 'Échéance acompte';
+      if (type === 'solde') return 'Échéance solde';
+      if (type === 'reglement_complet') return 'Échéance';
+      return 'Échéance';
+    }
+    if (type === 'acompte') return 'Acompte';
+    if (type === 'solde') return 'Solde';
+    if (type === 'reglement_complet') return 'Paiement complet';
+    if (type === 'avoir') return 'Avoir';
+    return 'Règlement';
+  };
 
   // Prendre en compte une éventuelle remise globale pour le contrôle
   const remiseGlobaleFacture =
@@ -81,8 +356,8 @@ export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: Details
   const netHTAttendu = totalHTLignes - remiseGlobaleFacture;
   const ecartHT = netHTAttendu - facture.totalHT;
 
-  const totalTTCAttendu = facture.totalHT + facture.totalTVA;
-  const ecartTTC = totalTTCAttendu - facture.totalTTC;
+  const totalTTCAttendu = facture.totalHT + totalTVAAffiche;
+  const ecartTTC = totalTTCAttendu - totalTTCAffiche;
   const tolerance = 0.05;
 
   const ecartHTSignificatif = Math.abs(ecartHT) > tolerance;
@@ -94,13 +369,93 @@ export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: Details
     <div className="details-facture">
       <div className="details-facture__header">
         <div>
-          <h2>Détails de la facture</h2>
+          <h2>Fiche pièce fournisseur</h2>
           <div className="details-facture__meta">
-            <span className="details-facture__badge">{facture.fournisseur}</span>
+            <span className="details-facture__badge">{libelleTypePiece}</span>
+            <span className="details-facture__badge details-facture__badge--secondary">{facture.fournisseur}</span>
             <span className="details-facture__numero">{facture.numero}</span>
           </div>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <button
+            type="button"
+            onClick={handleReparserDepuisPdf}
+            className="details-facture__print-btn"
+            aria-label="Reparser depuis PDF"
+            title={facture.pdfOriginal ? 'Reparser depuis le PDF' : 'PDF original indisponible'}
+            disabled={!facture.pdfOriginal || reparseEnCours}
+          >
+            <RefreshCcw size={18} />
+          </button>
+          <button
+            type="button"
+            onClick={() => {
+              if (!onUpdate) return;
+              const candidats = listerFacturesSauvegardes(facture);
+              const factureMemorisee = obtenirFactureMemorisee(facture.fournisseur, facture.numero);
+              if (factureMemorisee) {
+                candidats.unshift({
+                  facture: factureMemorisee,
+                  source: 'Modèle appris',
+                  dateSauvegarde: undefined,
+                });
+              }
+              if (candidats.length === 0) {
+                const fallback = rechercherFactureDansSauvegardes(facture);
+                if (!fallback) {
+                  window.alert('Aucune version sauvegardée trouvée pour cette facture.');
+                  return;
+                }
+                candidats.push({ facture: fallback, source: 'Sauvegarde', dateSauvegarde: undefined });
+              }
+
+              let indexChoisi = 0;
+              if (candidats.length > 1) {
+                const lignes = candidats.map((c, i) => {
+                  const dateLabel = c.dateSauvegarde
+                    ? ` (${c.dateSauvegarde.toLocaleString('fr-FR')})`
+                    : '';
+                  const totalHT = (c.facture.totalHT ?? 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+                  const totalTTC = (c.facture.totalTTC ?? 0).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' });
+                  const lignesCount = c.facture.lignes?.length ?? 0;
+                  const numero = c.facture.numero;
+                  return `${i + 1}. ${c.source}${dateLabel} | ${numero} | ${lignesCount} lignes | HT ${totalHT} | TTC ${totalTTC}`;
+                });
+                const choix = window.prompt(
+                  `Plusieurs sauvegardes trouvées :\n${lignes.join('\n')}\n\n` +
+                    'Entrez le numéro à restaurer :',
+                  '1'
+                );
+                const choisi = parseInt(choix || '1', 10);
+                if (Number.isNaN(choisi) || choisi < 1 || choisi > candidats.length) {
+                  return;
+                }
+                indexChoisi = choisi - 1;
+              }
+
+              const factureSauvegardee = candidats[indexChoisi].facture;
+              const factureRestau: Facture = {
+                ...factureSauvegardee,
+                id: facture.id,
+                fichierPDF: factureSauvegardee.fichierPDF ?? facture.fichierPDF,
+                pdfOriginal: factureSauvegardee.pdfOriginal ?? facture.pdfOriginal,
+                dateImport: facture.dateImport,
+              };
+              const confirmer = window.confirm(
+                `Restaurer la sauvegarde sélectionnée (${candidats[indexChoisi].source}) ?\n` +
+                  `${factureRestau.numero} — ${factureRestau.lignes.length} lignes — ` +
+                  `${factureRestau.totalTTC.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })}`
+              );
+              if (confirmer) {
+                onUpdate(factureRestau);
+              }
+            }}
+            className="details-facture__print-btn"
+            aria-label="Restaurer la facture"
+            title="Restaurer la facture depuis une sauvegarde"
+          >
+            ↺
+          </button>
           <button
             type="button"
             onClick={handleExporterPDF}
@@ -121,7 +476,7 @@ export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: Details
           </button>
           <button
             type="button"
-            onClick={() => window.print()}
+            onClick={handleImprimerFactureComplete}
             className="details-facture__print-btn"
             aria-label="Imprimer la facture"
             title="Imprimer la facture"
@@ -169,6 +524,25 @@ export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: Details
       </div>
 
       <div className="details-facture__content">
+        <div className="details-facture__summary-grid">
+          <div className="details-facture__summary-card">
+            <span className="details-facture__summary-label">Type de pièce</span>
+            <span className="details-facture__summary-value">{libelleTypePiece}</span>
+          </div>
+          <div className="details-facture__summary-card">
+            <span className="details-facture__summary-label">Total TTC</span>
+            <span className="details-facture__summary-value">{formaterMontant(totalTTCAffiche)}</span>
+          </div>
+          <div className="details-facture__summary-card">
+            <span className="details-facture__summary-label">Réglé TTC</span>
+            <span className="details-facture__summary-value">{formaterMontant(totalRegle)}</span>
+          </div>
+          <div className="details-facture__summary-card">
+            <span className="details-facture__summary-label">Reste à régler</span>
+            <span className="details-facture__summary-value">{formaterMontant(resteARegler)}</span>
+          </div>
+        </div>
+
         <div className={`details-facture__alert ${verificationOK ? 'details-facture__alert--success' : 'details-facture__alert--warning'}`}>
           {verificationOK ? (
             <>
@@ -196,7 +570,7 @@ export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: Details
                   )}
                   {ecartTTCSignificatif && (
                     <li>
-                      Total HT + TVA {formaterMontant(totalTTCAttendu)} vs Total TTC déclaré {formaterMontant(facture.totalTTC)} (écart {formaterMontant(ecartTTC)}).
+                      Total HT + TVA {formaterMontant(totalTTCAttendu)} vs Total TTC déclaré {formaterMontant(totalTTCAffiche)} (écart {formaterMontant(ecartTTC)}).
                     </li>
                   )}
                 </ul>
@@ -320,12 +694,12 @@ export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: Details
             </div>
             <div className="details-facture__total-item">
               <span className="details-facture__total-label">Total TVA</span>
-              <span className="details-facture__total-value">{formaterMontant(facture.totalTVA)}</span>
+              <span className="details-facture__total-value">{formaterMontant(totalTVAAffiche)}</span>
             </div>
             <div className="details-facture__total-item details-facture__total-item--final">
               <span className="details-facture__total-label">Total TTC</span>
               <span className="details-facture__total-value details-facture__total-value--final">
-                {formaterMontant(facture.totalTTC)}
+                {formaterMontant(totalTTCAffiche)}
               </span>
             </div>
             {reglements.length > 0 && (
@@ -338,11 +712,18 @@ export function DetailsFacture({ facture, onClose, onUpdate, onDelete }: Details
                         day: '2-digit',
                         month: '2-digit',
                         year: 'numeric',
-                      }).format(r.dateReglement)}{' '}
-                      – {formaterMontant(r.montant)} ({r.type})
+                      }).format(r.dateEcheance || r.dateReglement)}{' '}
+                      – {formaterMontant(r.montant)} ({formaterLibelleReglement(r.type, r.statut, r.notes)})
+                      {r.statut === 'en_attente' ? ', en attente' : ', payé'}
                     </div>
                   ))}
                 </div>
+              </div>
+            )}
+            {reglements.length > 0 && (
+              <div className="details-facture__total-item">
+                <span className="details-facture__total-label">Total en attente</span>
+                <span className="details-facture__total-value">{formaterMontant(totalEnAttente)}</span>
               </div>
             )}
             {reglements.length > 0 && (
@@ -382,9 +763,34 @@ interface ModalEditionFactureProps {
 }
 
 const TAUX_TVA_PAR_DEFAUT = 0.20;
+const arrondir2 = (valeur: number) =>
+  Math.round((valeur + Number.EPSILON) * 100) / 100;
+
+const obtenirTauxTVAFacture = (factureCourante: Facture): number => {
+  if (
+    factureCourante.donneesBrutes &&
+    typeof factureCourante.donneesBrutes.tauxTVA === 'number'
+  ) {
+    return Math.max(0, factureCourante.donneesBrutes.tauxTVA);
+  }
+
+  if (factureCourante.totalHT > 0) {
+    const ratio = factureCourante.totalTVA / factureCourante.totalHT;
+    return Math.max(0, ratio);
+  }
+
+  if (Math.abs((factureCourante.totalTTC || 0) - (factureCourante.totalHT || 0)) < 0.01) {
+    return 0;
+  }
+
+  return TAUX_TVA_PAR_DEFAUT;
+};
 
 function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionFactureProps) {
   const [factureModifiee, setFactureModifiee] = useState<Facture>({ ...facture });
+  const draftKey = useMemo(() => `facture-draft-${facture.id}`, [facture.id]);
+  const draftTimerRef = useRef<number | null>(null);
+  const [draftInfo, setDraftInfo] = useState<{ exists: boolean; savedAt?: Date }>({ exists: false });
   const tousLesFournisseurs = obtenirFournisseurs();
 
   // Gestion d'une remise HT globale (en fin de facture) via les données brutes
@@ -413,12 +819,7 @@ function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionF
 
   useEffect(() => {
     // Déterminer le taux de TVA courant (s'il existe), sinon le calculer à partir des totaux
-    const taux =
-      factureModifiee.donneesBrutes && typeof factureModifiee.donneesBrutes.tauxTVA === 'number'
-        ? factureModifiee.donneesBrutes.tauxTVA
-        : factureModifiee.totalHT > 0
-        ? factureModifiee.totalTVA / factureModifiee.totalHT
-        : TAUX_TVA_PAR_DEFAUT;
+    const taux = obtenirTauxTVAFacture(factureModifiee);
 
     setTauxTVABrute(((taux || 0) * 100).toFixed(2));
   }, [factureModifiee.totalHT, factureModifiee.totalTVA, factureModifiee.donneesBrutes?.tauxTVA]);
@@ -433,15 +834,12 @@ function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionF
       factureCourante.donneesBrutes && typeof factureCourante.donneesBrutes.remise === 'number'
         ? factureCourante.donneesBrutes.remise
         : 0;
-    const totalHT = Math.max(0, totalHTLignes - remise);
+    const totalHT = arrondir2(Math.max(0, totalHTLignes - remise));
 
-    const tauxTVA =
-      factureCourante.donneesBrutes && typeof factureCourante.donneesBrutes.tauxTVA === 'number'
-        ? factureCourante.donneesBrutes.tauxTVA
-        : TAUX_TVA_PAR_DEFAUT;
+    const tauxTVA = obtenirTauxTVAFacture(factureCourante);
 
-    const totalTVA = Math.round(totalHT * tauxTVA * 100) / 100;
-    const totalTTC = totalHT + totalTVA;
+    const totalTVA = arrondir2(totalHT * tauxTVA);
+    const totalTTC = arrondir2(totalHT + totalTVA);
 
     return {
       ...factureCourante,
@@ -465,13 +863,15 @@ function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionF
   const handleChangeLigne = (index: number, field: keyof LigneProduit, value: unknown) => {
     setFactureModifiee(prev => {
       const nouvellesLignes = [...prev.lignes];
-      nouvellesLignes[index] = { ...nouvellesLignes[index], [field]: value };
+      const valeurArrondie =
+        typeof value === 'number' ? arrondir2(value) : value;
+      nouvellesLignes[index] = { ...nouvellesLignes[index], [field]: valeurArrondie };
       
       // Recalculer le montant HT de la ligne
       if (field === 'quantite' || field === 'prixUnitaireHT' || field === 'remise') {
         const ligne = nouvellesLignes[index];
         const montantHT = (ligne.quantite * ligne.prixUnitaireHT) - ligne.remise;
-        nouvellesLignes[index] = { ...ligne, montantHT: Math.max(0, montantHT) };
+        nouvellesLignes[index] = { ...ligne, montantHT: arrondir2(Math.max(0, montantHT)) };
       }
 
       return recalculerTotaux({ ...prev, lignes: nouvellesLignes });
@@ -506,6 +906,11 @@ function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionF
 
     const factureFinale = recalculerTotaux(factureModifiee);
     onSauvegarder(factureFinale);
+    try {
+      localStorage.removeItem(draftKey);
+    } catch {
+      // ignorer
+    }
   };
 
   const formaterDate = (date: Date) => {
@@ -515,11 +920,117 @@ function ModalEditionFacture({ facture, onSauvegarder, onFermer }: ModalEditionF
     return date.toISOString().split('T')[0];
   };
 
+  const normaliserFactureDraft = (draft: Facture): Facture => ({
+    ...draft,
+    date: draft.date instanceof Date ? draft.date : new Date(draft.date),
+    dateLivraison: draft.dateLivraison ? new Date(draft.dateLivraison) : undefined,
+    dateImport: draft.dateImport ? new Date(draft.dateImport) : new Date(),
+  });
+
+  const lireBrouillon = () => {
+    try {
+      const brut = localStorage.getItem(draftKey);
+      if (!brut) {
+        setDraftInfo({ exists: false });
+        return null;
+      }
+      const parsed = JSON.parse(brut);
+      const factureDraft = parsed?.facture as Facture | undefined;
+      const savedAt = parsed?.savedAt ? new Date(parsed.savedAt) : undefined;
+      if (!factureDraft || factureDraft.numero !== facture.numero) {
+        setDraftInfo({ exists: false });
+        return null;
+      }
+      setDraftInfo({ exists: true, savedAt });
+      return factureDraft;
+    } catch {
+      setDraftInfo({ exists: false });
+      return null;
+    }
+  };
+
+  const restaurerBrouillon = () => {
+    const factureDraft = lireBrouillon();
+    if (!factureDraft) {
+      window.alert('Aucun brouillon disponible pour cette facture.');
+      return;
+    }
+    setFactureModifiee(normaliserFactureDraft(factureDraft));
+  };
+
+  const effacerBrouillon = () => {
+    try {
+      localStorage.removeItem(draftKey);
+    } catch {
+      // ignorer
+    }
+    setDraftInfo({ exists: false });
+  };
+
+  // Restaurer automatiquement un brouillon si présent
+  useEffect(() => {
+    const factureDraft = lireBrouillon();
+    if (!factureDraft) return;
+    const confirmer = window.confirm(
+      'Un brouillon de saisie a été trouvé pour cette facture.\n\n' +
+        'Voulez-vous le restaurer ?'
+    );
+    if (confirmer) {
+      setFactureModifiee(normaliserFactureDraft(factureDraft));
+    }
+  }, [draftKey, facture.numero]);
+
+  // Sauvegarde automatique du brouillon
+  useEffect(() => {
+    if (!factureModifiee) return;
+    if (draftTimerRef.current) {
+      window.clearTimeout(draftTimerRef.current);
+    }
+    draftTimerRef.current = window.setTimeout(() => {
+      try {
+        localStorage.setItem(
+          draftKey,
+          JSON.stringify({ facture: factureModifiee, savedAt: new Date().toISOString() })
+        );
+      } catch {
+        // ignorer
+      }
+    }, 400);
+    return () => {
+      if (draftTimerRef.current) {
+        window.clearTimeout(draftTimerRef.current);
+      }
+    };
+  }, [factureModifiee, draftKey]);
+
   return (
     <div className="details-facture__modal-overlay" onClick={onFermer}>
       <div className="details-facture__modal" onClick={(e) => e.stopPropagation()}>
         <div className="details-facture__modal-header">
           <h2>Éditer la facture {facture.numero}</h2>
+          {draftInfo.exists && (
+            <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+              <small style={{ color: '#6b7280' }}>
+                Brouillon{draftInfo.savedAt ? ` (${draftInfo.savedAt.toLocaleString('fr-FR')})` : ''}
+              </small>
+              <button
+                type="button"
+                onClick={restaurerBrouillon}
+                className="details-facture__modal-btn details-facture__modal-btn--secondary"
+                style={{ padding: '0.25rem 0.5rem' }}
+              >
+                Restaurer
+              </button>
+              <button
+                type="button"
+                onClick={effacerBrouillon}
+                className="details-facture__modal-btn details-facture__modal-btn--secondary"
+                style={{ padding: '0.25rem 0.5rem' }}
+              >
+                Effacer
+              </button>
+            </div>
+          )}
           <button
             type="button"
             onClick={onFermer}

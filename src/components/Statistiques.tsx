@@ -30,6 +30,7 @@ interface DocumentSource {
   totalTVA: number;
   totalTTC: number;
   type: TypeSource;
+  sourceFactureId?: string;
 }
 
 interface DocumentFiltre {
@@ -85,6 +86,39 @@ const fournisseursInitial: Record<
   'ITALESSE': { nombre: 0, totalHT: 0, totalTVA: 0, totalTTC: 0 },
 };
 
+const normaliserTexteComparaison = (valeur: string): string[] => {
+  return valeur
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, ' ')
+    .split(' ')
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 3 && !/^\d+$/.test(token));
+};
+
+const scoreRattachementDocument = (devis: Devis, facture: Facture): number => {
+  if (devis.fournisseur !== facture.fournisseur) return -1;
+  if ((facture.totalTTC || 0) >= (devis.totalTTC || 0)) return -1;
+
+  const tokensParent = new Set(normaliserTexteComparaison(devis.numero || ''));
+  const tokensEnfant = normaliserTexteComparaison(facture.numero || '');
+  const correspondances = tokensEnfant.filter((token) => tokensParent.has(token)).length;
+  const bonusAcompte = (facture.numero || '').toLowerCase().includes('acompte') ? 5 : 0;
+  const dateFacture = facture.date instanceof Date ? facture.date : new Date(facture.date);
+  const dateDevis = devis.date instanceof Date ? devis.date : new Date(devis.date);
+  const bonusChronologie = dateFacture >= dateDevis ? 1 : 0;
+
+  return correspondances * 10 + bonusAcompte + bonusChronologie;
+};
+
+const estPieceComptableAcompte = (devis: Devis, facture: Facture): boolean => {
+  const numero = (facture.numero || '').toLowerCase();
+  const totalFacture = typeof facture.totalTTC === 'number' ? facture.totalTTC : 0;
+  const totalDevis = typeof devis.totalTTC === 'number' ? devis.totalTTC : 0;
+  return numero.includes('acompte') || (totalDevis > 0 && totalFacture > 0 && totalFacture < totalDevis - 0.01);
+};
+
 export function StatistiquesComponent({
   factures,
   devis,
@@ -125,6 +159,16 @@ export function StatistiquesComponent({
   const [exerciceFiltre, setExerciceFiltre] = useState('');
   const [modeSource, setModeSource] = useState<TypeSource>('facture');
 
+  const libelleModeSource =
+    modeSource === 'facture'
+      ? 'Factures enregistrées'
+      : 'Base prévisionnelle héritée (anciens devis)';
+
+  const descriptionModeSource =
+    modeSource === 'facture'
+      ? 'Analyse basée sur les factures réellement enregistrées dans l’application.'
+      : 'Analyse basée sur les anciens devis/estimations conservés pour comparaison historique.';
+
   const [triFournisseur, setTriFournisseur] = useState<{ colonne: ColonneFournisseur; sens: SensTri }>({
     colonne: 'ht',
     sens: 'desc',
@@ -140,6 +184,13 @@ export function StatistiquesComponent({
 
   const [fournisseurSelectionne, setFournisseurSelectionne] = useState<string>('');
   const [produitSelectionne, setProduitSelectionne] = useState<string>('');
+  const [sectionsVisibles, setSectionsVisibles] = useState({
+    fournisseurs: true,
+    produits: true,
+    detailProduit: true,
+    tempsMois: true,
+    tempsExercice: true,
+  });
 
   // Édition du nom de fournisseur
   const [fournisseurEnEdition, setFournisseurEnEdition] = useState<string | null>(null);
@@ -183,17 +234,119 @@ export function StatistiquesComponent({
         type: 'devis',
       }));
     }
-    return factures.map((f) => ({
-      id: f.id,
-      fournisseur: f.fournisseur,
-      numero: f.numero,
-      date: f.date instanceof Date ? f.date : new Date(f.date),
-      lignes: f.lignes,
-      totalHT: f.totalHT,
-      totalTVA: f.totalTVA,
-      totalTTC: f.totalTTC,
-      type: 'facture',
-    }));
+
+    const facturesParId = new Map(factures.map((facture) => [facture.id, facture]));
+    const idsFacturesMasquees = new Set<string>();
+    const factureVersParentInfere = new Map<string, string>();
+    const idsFacturesLieesExplicitement = new Set(
+      devis.flatMap((devisCourant) => devisCourant.facturesLieesIds || [])
+    );
+
+    factures.forEach((facture) => {
+      if (idsFacturesLieesExplicitement.has(facture.id)) return;
+      const numero = (facture.numero || '').toLowerCase();
+      if (!numero.includes('acompte')) return;
+
+      const meilleurParent = devis
+        .map((devisCourant) => ({
+          devis: devisCourant,
+          score: scoreRattachementDocument(devisCourant, facture),
+        }))
+        .filter((candidat) => candidat.score > 0)
+        .sort((a, b) => b.score - a.score)[0];
+
+      if (meilleurParent) {
+        factureVersParentInfere.set(facture.id, meilleurParent.devis.id);
+      }
+    });
+
+    const sourcesConsolidees: DocumentSource[] = [];
+
+    devis.forEach((devisCourant) => {
+      const facturesLiees = [
+        ...(devisCourant.facturesLieesIds || []),
+        ...factures
+          .filter((facture) => factureVersParentInfere.get(facture.id) === devisCourant.id)
+          .map((facture) => facture.id),
+      ]
+        .filter((id, index, array) => array.indexOf(id) === index)
+        .map((id) => facturesParId.get(id))
+        .filter((facture): facture is Facture => !!facture);
+
+      if (facturesLiees.length === 0) {
+        sourcesConsolidees.push({
+          id: `principal-${devisCourant.id}`,
+          fournisseur: devisCourant.fournisseur,
+          numero: devisCourant.numero,
+          date: devisCourant.date instanceof Date ? devisCourant.date : new Date(devisCourant.date),
+          lignes: devisCourant.lignes,
+          totalHT: devisCourant.totalHT,
+          totalTVA: devisCourant.totalTVA,
+          totalTTC: devisCourant.totalTTC,
+          type: 'facture',
+        });
+        return;
+      }
+
+      facturesLiees.forEach((facture) => idsFacturesMasquees.add(facture.id));
+
+      const facturesAcompte = facturesLiees.filter((facture) => estPieceComptableAcompte(devisCourant, facture));
+      const facturesFinales = facturesLiees.filter((facture) => !facturesAcompte.includes(facture));
+      const groupeSimpleDuplique =
+        facturesAcompte.length === 0 &&
+        facturesFinales.length === 1 &&
+        Math.abs((facturesFinales[0].totalTTC || 0) - (devisCourant.totalTTC || 0)) < 0.01;
+
+      if (groupeSimpleDuplique) {
+        const factureFinale = facturesFinales[0];
+        const lignesSource =
+          devisCourant.lignes.length >= factureFinale.lignes.length ? devisCourant.lignes : factureFinale.lignes;
+        sourcesConsolidees.push({
+          id: `principal-${devisCourant.id}`,
+          fournisseur: devisCourant.fournisseur,
+          numero: devisCourant.numero,
+          date: devisCourant.date instanceof Date ? devisCourant.date : new Date(devisCourant.date),
+          lignes: lignesSource,
+          totalHT: devisCourant.totalHT,
+          totalTVA: devisCourant.totalTVA,
+          totalTTC: devisCourant.totalTTC,
+          type: 'facture',
+          sourceFactureId: factureFinale.id,
+        });
+        return;
+      }
+
+      sourcesConsolidees.push({
+        id: `principal-${devisCourant.id}`,
+        fournisseur: devisCourant.fournisseur,
+        numero: devisCourant.numero,
+        date: devisCourant.date instanceof Date ? devisCourant.date : new Date(devisCourant.date),
+        lignes: devisCourant.lignes,
+        totalHT: devisCourant.totalHT,
+        totalTVA: devisCourant.totalTVA,
+        totalTTC: devisCourant.totalTTC,
+        type: 'facture',
+      });
+    });
+
+    factures.forEach((facture) => {
+      if (idsFacturesMasquees.has(facture.id)) return;
+
+      sourcesConsolidees.push({
+        id: facture.id,
+        fournisseur: facture.fournisseur,
+        numero: facture.numero,
+        date: facture.date instanceof Date ? facture.date : new Date(facture.date),
+        lignes: facture.lignes,
+        totalHT: facture.totalHT,
+        totalTVA: facture.totalTVA,
+        totalTTC: facture.totalTTC,
+        type: 'facture',
+        sourceFactureId: facture.id,
+      });
+    });
+
+    return sourcesConsolidees;
   }, [factures, devis, modeSource]);
 
   const exercicesDisponibles = useMemo(() => {
@@ -231,10 +384,12 @@ export function StatistiquesComponent({
 
       if (lignesFiltrees.length === 0) return acc;
 
-      const totalHTLignes = lignesFiltrees.reduce((sum, ligne) => sum + ligne.montantHT, 0);
-      const ratio = document.totalHT > 0 ? Math.min(1, totalHTLignes / document.totalHT) : 0;
-      const totalTVALignes = document.totalTVA * ratio;
-      const totalTTCLignes = totalHTLignes + totalTVALignes;
+      const documentComplet = lignesFiltrees.length === document.lignes.length;
+      const totalHTLignesBrut = lignesFiltrees.reduce((sum, ligne) => sum + ligne.montantHT, 0);
+      const totalHTLignes = documentComplet ? document.totalHT : totalHTLignesBrut;
+      const ratio = document.totalHT > 0 ? Math.min(1, totalHTLignesBrut / document.totalHT) : 0;
+      const totalTVALignes = documentComplet ? document.totalTVA : document.totalTVA * ratio;
+      const totalTTCLignes = documentComplet ? document.totalTTC : totalHTLignes + totalTVALignes;
 
       acc.push({
         document,
@@ -567,6 +722,46 @@ export function StatistiquesComponent({
 
   const totalQuantiteProduits = produitsFiltres.reduce((sum, produit) => sum + produit.quantiteTotale, 0);
   const totalMontantProduits = produitsFiltres.reduce((sum, produit) => sum + produit.montantHTTotal, 0);
+  const totalQuantiteFiltree = useMemo(
+    () =>
+      documentsFiltres.reduce(
+        (sum, { lignes }) =>
+          sum +
+          lignes.reduce((ligneSum, ligne) => ligneSum + (typeof ligne.quantite === 'number' ? ligne.quantite : 0), 0),
+        0
+      ),
+    [documentsFiltres]
+  );
+  const fournisseursActifs = fournisseursTries.length;
+  const articlesDistincts = useMemo(() => {
+    const refs = new Set<string>();
+    Object.values(detailsParFournisseur).forEach((produits) => {
+      Object.keys(produits).forEach((ref) => refs.add(ref));
+    });
+    return refs.size;
+  }, [detailsParFournisseur]);
+  const panierMoyenTTC =
+    statistiquesFiltrees.nombreFactures > 0
+      ? statistiquesFiltrees.totalTTC / statistiquesFiltrees.nombreFactures
+      : 0;
+
+  const basculerSection = (
+    section: 'fournisseurs' | 'produits' | 'detailProduit' | 'tempsMois' | 'tempsExercice'
+  ) => {
+    setSectionsVisibles((courant) => ({
+      ...courant,
+      [section]: !courant[section],
+    }));
+  };
+
+  const reinitialiserFiltres = () => {
+    setFiltreDateDebut('');
+    setFiltreDateFin('');
+    setFiltreRecherche('');
+    setExerciceFiltre('');
+    setFournisseurSelectionne('');
+    setProduitSelectionne('');
+  };
 
   const changerTri = <T extends ColonneFournisseur | ColonneProduit | ColonneDetail>(
     courant: { colonne: T; sens: SensTri },
@@ -595,6 +790,9 @@ export function StatistiquesComponent({
     <div className="statistiques">
       <div className="statistiques__header">
         <h2>Statistiques</h2>
+        <p className="statistiques__subtitle">
+          Analyse fournisseur, article et temporalité avec des vues que vous pouvez afficher ou masquer selon le besoin.
+        </p>
       </div>
 
       <div className="statistiques__cards">
@@ -604,7 +802,7 @@ export function StatistiquesComponent({
           </div>
           <div className="statistiques__card-content">
             <span className="statistiques__card-label">
-              {modeSource === 'facture' ? 'Factures (filtrées)' : 'Devis (filtrés)'}
+              {libelleModeSource}
             </span>
             <span className="statistiques__card-value">{statistiquesFiltrees.nombreFactures}</span>
           </div>
@@ -638,15 +836,51 @@ export function StatistiquesComponent({
             </span>
           </div>
         </div>
+        <div className="statistiques__card">
+          <div className="statistiques__card-icon">
+            <Building2 size={24} />
+          </div>
+          <div className="statistiques__card-content">
+            <span className="statistiques__card-label">Fournisseurs actifs</span>
+            <span className="statistiques__card-value">{fournisseursActifs}</span>
+          </div>
+        </div>
+        <div className="statistiques__card">
+          <div className="statistiques__card-icon">
+            <Layers size={24} />
+          </div>
+          <div className="statistiques__card-content">
+            <span className="statistiques__card-label">Articles distincts</span>
+            <span className="statistiques__card-value">{articlesDistincts}</span>
+          </div>
+        </div>
+        <div className="statistiques__card">
+          <div className="statistiques__card-icon">
+            <List size={24} />
+          </div>
+          <div className="statistiques__card-content">
+            <span className="statistiques__card-label">Quantité totale</span>
+            <span className="statistiques__card-value">{totalQuantiteFiltree}</span>
+          </div>
+        </div>
+        <div className="statistiques__card">
+          <div className="statistiques__card-icon">
+            <TrendingUp size={24} />
+          </div>
+          <div className="statistiques__card-content">
+            <span className="statistiques__card-label">Panier moyen TTC</span>
+            <span className="statistiques__card-value">{formaterMontant(panierMoyenTTC)}</span>
+          </div>
+        </div>
       </div>
 
       <div className="statistiques__filters">
         <div className="statistiques__filters-group">
           <label>
-            Mode
+            Base d’analyse
             <select value={modeSource} onChange={(e) => setModeSource(e.target.value as TypeSource)}>
-              <option value="facture">Facturé</option>
-              <option value="devis">Prévisionnel (devis)</option>
+              <option value="facture">Factures enregistrées</option>
+              <option value="devis">Base prévisionnelle héritée</option>
             </select>
           </label>
           <label>
@@ -712,8 +946,58 @@ export function StatistiquesComponent({
             />
           </label>
         </div>
+        <div className="statistiques__filters-group">
+          <div style={{ alignSelf: 'end', color: '#6b7280', fontSize: '0.9rem', maxWidth: '420px' }}>
+            <strong>{libelleModeSource} :</strong> {descriptionModeSource}
+          </div>
+        </div>
+        <div className="statistiques__filters-group statistiques__filters-group--actions">
+          <button type="button" className="statistiques__action-btn" onClick={reinitialiserFiltres}>
+            Réinitialiser les filtres
+          </button>
+        </div>
       </div>
 
+      <div className="statistiques__view-switcher">
+        <span className="statistiques__view-switcher-label">Blocs visibles</span>
+        <button
+          type="button"
+          className={`statistiques__toggle ${sectionsVisibles.fournisseurs ? 'statistiques__toggle--active' : ''}`}
+          onClick={() => basculerSection('fournisseurs')}
+        >
+          Stats fournisseurs
+        </button>
+        <button
+          type="button"
+          className={`statistiques__toggle ${sectionsVisibles.produits ? 'statistiques__toggle--active' : ''}`}
+          onClick={() => basculerSection('produits')}
+        >
+          Stats articles
+        </button>
+        <button
+          type="button"
+          className={`statistiques__toggle ${sectionsVisibles.detailProduit ? 'statistiques__toggle--active' : ''}`}
+          onClick={() => basculerSection('detailProduit')}
+        >
+          Détail article
+        </button>
+        <button
+          type="button"
+          className={`statistiques__toggle ${sectionsVisibles.tempsMois ? 'statistiques__toggle--active' : ''}`}
+          onClick={() => basculerSection('tempsMois')}
+        >
+          Vue mensuelle
+        </button>
+        <button
+          type="button"
+          className={`statistiques__toggle ${sectionsVisibles.tempsExercice ? 'statistiques__toggle--active' : ''}`}
+          onClick={() => basculerSection('tempsExercice')}
+        >
+          Vue exercice
+        </button>
+      </div>
+
+      {(sectionsVisibles.fournisseurs || sectionsVisibles.produits || sectionsVisibles.detailProduit) && (
       <div className="statistiques__section">
         <h3 className="statistiques__section-title">
           <Building2 size={20} />
@@ -721,12 +1005,14 @@ export function StatistiquesComponent({
         </h3>
 
         <div className="statistiques__panels">
+          {sectionsVisibles.fournisseurs && (
           <div className="statistiques__panel">
             <div className="statistiques__panel-header">
               <List size={18} />
               <span>Fournisseurs</span>
+              <span className="statistiques__panel-badge">{fournisseursTries.length}</span>
             </div>
-            <p style={{ margin: '0.75rem 0 0', color: '#6b7280', fontSize: '0.85rem' }}>
+            <p className="statistiques__panel-help">
               Sélectionnez un fournisseur pour voir ses produits.
             </p>
             <table className="statistiques__table">
@@ -801,12 +1087,14 @@ export function StatistiquesComponent({
               </tbody>
             </table>
           </div>
+          )}
 
-          {fournisseurSelectionne && (
+          {sectionsVisibles.produits && fournisseurSelectionne && (
             <div className="statistiques__panel">
               <div className="statistiques__panel-header">
                 <Layers size={18} />
                 <span>Produits – {fournisseurSelectionne}</span>
+                <span className="statistiques__panel-badge">{produitsFiltres.length}</span>
               </div>
               <table className="statistiques__table">
                 <thead>
@@ -908,7 +1196,7 @@ export function StatistiquesComponent({
           )}
         </div>
 
-        {fournisseurSelectionne && produitDetail && (
+        {sectionsVisibles.detailProduit && fournisseurSelectionne && produitDetail && (
           <div className="statistiques__panel statistiques__panel--full">
             <div className="statistiques__panel-header">
               <Eye size={18} />
@@ -964,7 +1252,10 @@ export function StatistiquesComponent({
               <tbody>
                 {lignesDetailTriees.map((ligne) => {
                   const document = documentsParId.get(ligne.id);
-                  const facture = document?.type === 'facture' ? facturesParId.get(document.id) : undefined;
+                  const facture =
+                    document?.type === 'facture' && document.sourceFactureId
+                      ? facturesParId.get(document.sourceFactureId)
+                      : undefined;
                   return (
                     <tr key={`${ligne.id}-${ligne.numero}-${ligne.date.getTime()}`}>
                       <td>{ligne.numero}</td>
@@ -1000,17 +1291,21 @@ export function StatistiquesComponent({
           </div>
         )}
       </div>
+      )}
 
+      {(sectionsVisibles.tempsMois || sectionsVisibles.tempsExercice) && (
       <div className="statistiques__section">
         <h3 className="statistiques__section-title">
           <Calendar size={20} />
           Synthèse temporelle
         </h3>
         <div className="statistiques__panels">
+          {sectionsVisibles.tempsMois && (
           <div className="statistiques__panel">
             <div className="statistiques__panel-header">
               <List size={18} />
               <span>Par mois</span>
+              <span className="statistiques__panel-badge">{statsParMois.length}</span>
             </div>
             <table className="statistiques__table">
               <thead>
@@ -1042,10 +1337,13 @@ export function StatistiquesComponent({
               </tbody>
             </table>
           </div>
+          )}
+          {sectionsVisibles.tempsExercice && (
           <div className="statistiques__panel">
             <div className="statistiques__panel-header">
               <Layers size={18} />
               <span>Par exercice</span>
+              <span className="statistiques__panel-badge">{statsParExercice.length}</span>
             </div>
             <table className="statistiques__table">
               <thead>
@@ -1077,8 +1375,10 @@ export function StatistiquesComponent({
               </tbody>
             </table>
           </div>
+          )}
         </div>
       </div>
+      )}
 
       {/* Modal de renommage de fournisseur */}
       {fournisseurEnEdition && (

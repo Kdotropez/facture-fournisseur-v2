@@ -3,30 +3,35 @@
  */
 
 import { useRef, useState, useEffect } from 'react';
-import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard, FileSignature, X, FolderOpen } from 'lucide-react';
+import { FileText, BarChart3, Upload, Download, RotateCcw, Edit, CreditCard, FileSignature, X, FolderOpen, Package, Layers3, Settings } from 'lucide-react';
 import { useFactures } from './hooks/useFactures';
 import { useDevis } from './hooks/useDevis';
+import { useDocuments } from './hooks/useDocuments';
 import { useImportPDF, detecterFournisseurDepuisContenu } from './hooks/useImportPDF';
 import { DetailsFacture } from './components/DetailsFacture';
 import { DetailsDevis } from './components/DetailsDevis';
+import { DetailsDocument } from './components/DetailsDocument';
 import { StatistiquesComponent } from './components/Statistiques';
 import { ImportPDF } from './components/ImportPDF';
-import { ListeFichiersDisponibles } from './components/ListeFichiersDisponibles';
 import { EditeurParsing } from './components/EditeurParsing';
 import { Reglements } from './components/Reglements';
 import { VueFournisseur } from './components/VueFournisseur';
 import { ListeDevis } from './components/ListeDevis';
+import { ListeDocuments } from './components/ListeDocuments';
 import { EditeurDevis } from './components/EditeurDevis';
+import { Livraisons } from './components/Livraisons';
 import type { Facture } from './types/facture';
 import type { Devis } from './types/devis';
+import type { DocumentFournisseur } from './types/document';
 import type { Fournisseur } from './types/facture';
 import { parserFacture, obtenirFournisseurs } from '@parsers/index';
 import './App.css';
 import { lireFichierEnDataURL } from './utils/fileUtils';
 import { rechercherFacturesPerdues, afficherRapportDiagnostic, creerBackupFactures } from './utils/diagnosticLocalStorage';
-import { chargerFactures } from './services/factureService';
+import { chargerFactures, obtenirFactureParNumeroFournisseur } from './services/factureService';
 import { creerSauvegardeGlobale, restaurerSauvegardeGlobale, SauvegardeGlobale } from './services/sauvegardeGlobaleService';
 import { exporterSauvegardeVersGoogleDrive } from './services/googleDriveService';
+import { migrerDocumentsDepuisLegacy } from './services/documentService';
 import {
   chargerHandleDossierSauvegarde,
   demanderDossierSauvegarde,
@@ -34,6 +39,7 @@ import {
 } from './utils/directoryHandleStore';
 import { chargerDevis } from './services/devisService';
 import { ajouterReglement } from './services/reglementService';
+import { documentDepuisDevis, documentDepuisFacture, documentVersDevis, documentVersFacture } from './types/document';
 
 const CHEMIN_DOSSIER_SAUVEGARDE = 'C:\\Users\\lefev\\Projets\\FACTURES FOURNISSEURS\\sauvegarde';
 
@@ -101,13 +107,25 @@ async function telechargerSauvegardeJSON(
   }
 }
 
-type Vue = 'factures' | 'devis' | 'statistiques' | 'import' | 'editeur' | 'reglements';
+type Vue =
+  | 'pieces'
+  | 'import'
+  | 'reglements'
+  | 'livraisons'
+  | 'statistiques'
+  | 'administration'
+  | 'factures'
+  | 'devis'
+  | 'editeur';
+
+const arrondir2 = (valeur: number) =>
+  Math.round((valeur + Number.EPSILON) * 100) / 100;
 
 function App() {
-  const [vueActive, setVueActive] = useState<Vue>('factures');
+  const [vueActive, setVueActive] = useState<Vue>('pieces');
   const [factureSelectionnee, setFactureSelectionnee] = useState<Facture | null>(null);
   const [devisSelectionne, setDevisSelectionne] = useState<Devis | null>(null);
-  const [fichierEnChargement, setFichierEnChargement] = useState<string | null>(null);
+  const [documentSelectionne, setDocumentSelectionne] = useState<DocumentFournisseur | null>(null);
   const [fichierPourEditeur, setFichierPourEditeur] = useState<File | null>(null);
   const inputRestaurationRef = useRef<HTMLInputElement>(null);
   const inputImportDevisRef = useRef<HTMLInputElement>(null);
@@ -140,6 +158,24 @@ function App() {
     mettreAJourDevis,
     remplacerDevis,
   } = useDevis();
+  const {
+    documents: documentsFiltres,
+    tousLesDocuments,
+    termeRecherche: termeRechercheDocuments,
+    setTermeRecherche: setTermeRechercheDocuments,
+    fournisseurFiltre: fournisseurFiltreDocuments,
+    setFournisseurFiltre: setFournisseurFiltreDocuments,
+    mettreAJourDocument,
+    rechargerDocuments,
+  } = useDocuments();
+
+  useEffect(() => {
+    void migrerDocumentsDepuisLegacy();
+  }, []);
+
+  useEffect(() => {
+    void rechargerDocuments();
+  }, [toutesLesFactures, tousLesDevis, rechargerDocuments]);
 
   // État pour gérer les fournisseurs sélectionnés dans la vue fournisseur
   // Par défaut, afficher tous les fournisseurs
@@ -271,9 +307,9 @@ function App() {
     }
     
     // Basculer vers la vue factures après import
-    setVueActive('factures');
-    // Sélectionner la dernière facture importée
-    setFactureSelectionnee(derniereFacture);
+    setVueActive('pieces');
+    setDocumentSelectionne(documentDepuisFacture(derniereFacture));
+    setFactureSelectionnee(null);
     
     // Forcer un nouveau rechargement après un court délai pour s'assurer que tout est synchronisé
     setTimeout(() => {
@@ -291,14 +327,54 @@ function App() {
     setDevisSelectionne(devis);
   };
 
+  const handleDocumentSelect = (document: DocumentFournisseur | null) => {
+    if (!document) {
+      setDocumentSelectionne(null);
+      return;
+    }
+
+    if (document.documentParentId) {
+      const parent = tousLesDocuments.find((courant) => courant.id === document.documentParentId);
+      setDocumentSelectionne(parent || document);
+      return;
+    }
+
+    setDocumentSelectionne(document);
+  };
+
   const handleNouveauDevis = () => {
     setEditeurDevisOuvert(true);
   };
 
-  const handleDevisCree = (devis: Devis) => {
-    void ajouterDevis(devis);
-    setDevisSelectionne(devis);
-    setEditeurDevisOuvert(false);
+  const handleDevisCree = async (devis: Devis) => {
+    try {
+      await ajouterDevis(devis);
+      setDevisSelectionne(null);
+      setDocumentSelectionne(documentDepuisDevis(devis));
+      setVueActive('pieces');
+      setEditeurDevisOuvert(false);
+      setErreur(null);
+    } catch (error) {
+      setErreur(
+        `Impossible d'enregistrer le devis : ${
+          error instanceof Error ? error.message : 'Erreur inconnue'
+        }`
+      );
+    }
+  };
+
+  const handleDevisMisAJour = async (devisModifie: Devis) => {
+    try {
+      await mettreAJourDevis(devisModifie);
+      setDevisSelectionne(devisModifie);
+      setErreur(null);
+    } catch (error) {
+      setErreur(
+        `Impossible d'enregistrer le devis : ${
+          error instanceof Error ? error.message : 'Erreur inconnue'
+        }`
+      );
+    }
   };
 
   const genererNumeroFactureDepuisDevis = (devis: Devis) => {
@@ -320,6 +396,15 @@ function App() {
     const acomptes = devis.acomptesDemandes || [];
     const totalAcomptes = acomptes.reduce((sum, a) => sum + (a.montantTTC || 0), 0);
     const reste = Math.max(0, devis.totalTTC - totalAcomptes);
+    const totalHTDevis = arrondir2(devis.totalHT || 0);
+    const totalTVADevis = arrondir2(devis.totalTVA || 0);
+    const totalTTCDevis = arrondir2(devis.totalTTC || 0);
+    const devisSansTVA =
+      Math.abs(totalTVADevis) < 0.01 || Math.abs(totalTTCDevis - totalHTDevis) < 0.01;
+    const totalTVAFacture = devisSansTVA ? 0 : totalTVADevis;
+    const totalTTCFacture = devisSansTVA ? totalHTDevis : totalTTCDevis;
+    const tauxTVAFacture =
+      totalHTDevis > 0 ? totalTVAFacture / totalHTDevis : 0;
 
     const facture: Facture = {
       id: `facture-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -331,11 +416,19 @@ function App() {
         quantiteFactureeManuelle: l.quantiteFactureeManuelle,
         receptions: l.receptions,
       })),
-      totalHT: devis.totalHT,
-      totalTVA: devis.totalTVA,
-      totalTTC: devis.totalTTC,
+      totalHT: totalHTDevis,
+      totalTVA: totalTVAFacture,
+      totalTTC: totalTTCFacture,
       dateImport: new Date(),
-      donneesBrutes: devis.donneesBrutes,
+      donneesBrutes: {
+        ...(devis.donneesBrutes || {}),
+        totalHTBrut:
+          devis.donneesBrutes && typeof devis.donneesBrutes.totalHTBrut === 'number'
+            ? devis.donneesBrutes.totalHTBrut
+            : totalHTDevis,
+        netHT: totalHTDevis,
+        tauxTVA: tauxTVAFacture,
+      },
       fichierPDF: devis.fichierPDF,
       pdfOriginal: devis.pdfOriginal,
     };
@@ -372,12 +465,27 @@ function App() {
       const devisMisAJour: Devis = {
         ...devis,
         statut: 'facture_soldee',
-        facturesLieesIds: [facture.id],
+        facturesLieesIds: Array.from(new Set([...(devis.facturesLieesIds || []), facture.id])),
       };
       await mettreAJourDevis(devisMisAJour);
-      setDevisSelectionne(devisMisAJour);
-      setVueActive('factures');
-      setFactureSelectionnee(facture);
+      const facturesChargees = [...chargerFactures()];
+      remplacerFactures(facturesChargees);
+      const factureSauvegardee =
+        facturesChargees.find((factureChargee) => factureChargee.id === facture.id) || facture;
+
+      if (fournisseursSelectionnes.length > 0 && !fournisseursSelectionnes.includes(facture.fournisseur)) {
+        setFournisseursSelectionnes([...fournisseursSelectionnes, facture.fournisseur]);
+      } else if (fournisseursSelectionnes.length === 0 || fournisseurFiltre !== facture.fournisseur) {
+        setFournisseursSelectionnes([facture.fournisseur]);
+      }
+      if (fournisseurFiltre !== facture.fournisseur) {
+        setFournisseurFiltre(facture.fournisseur);
+      }
+
+      setDevisSelectionne(null);
+      setFactureSelectionnee(null);
+      setDocumentSelectionne(documentDepuisFacture(factureSauvegardee));
+      setVueActive('pieces');
     } catch (error) {
       setErreur(
         `Impossible de transformer le devis en facture : ${
@@ -388,24 +496,42 @@ function App() {
   };
 
   const handleVoirFacture = (facture: Facture) => {
-    setFactureSelectionnee(facture);
-    setVueActive('factures');
+    setFactureSelectionnee(null);
+    setDocumentSelectionne(documentDepuisFacture(facture));
+    setVueActive('pieces');
   };
 
   const handleImporterEditeur = async (facture: Facture) => {
     // Vérifier si la facture existe déjà
-    const existeDeja = toutesLesFactures.some(
-      f => f.numero === facture.numero && f.fournisseur === facture.fournisseur
+    const factureExistante = obtenirFactureParNumeroFournisseur(
+      facture.fournisseur,
+      facture.numero
     );
-
-    if (existeDeja) {
-      setErreur('Cette facture existe déjà');
-      return;
+    if (factureExistante) {
+      const confirmer = window.confirm(
+        'Cette facture existe déjà.\n\n' +
+          'Voulez-vous remplacer la version existante par votre saisie ?'
+      );
+      if (!confirmer) {
+        return;
+      }
     }
 
     try {
-      // Ajouter la facture
-      ajouterFacture(facture);
+      if (factureExistante) {
+        // Remplacer la facture existante en conservant l'ID (pour garder les règlements liés)
+        const factureRemplacee: Facture = {
+          ...facture,
+          id: factureExistante.id,
+          dateImport: factureExistante.dateImport ?? facture.dateImport,
+          fichierPDF: facture.fichierPDF ?? factureExistante.fichierPDF,
+          pdfOriginal: facture.pdfOriginal ?? factureExistante.pdfOriginal,
+        };
+        mettreAJourFacture(factureRemplacee);
+      } else {
+        // Ajouter la facture
+        ajouterFacture(facture);
+      }
 
       // Recharger depuis le stockage pour s'assurer qu'elle est bien sauvegardée
       const facturesChargees = chargerFactures();
@@ -421,12 +547,13 @@ function App() {
         return;
       }
 
-      // Basculer vers la vue factures et sélectionner la facture importée
-      setVueActive('factures');
+      // Basculer vers la vue pièces et sélectionner la facture importée
+      setVueActive('pieces');
       setFournisseurFiltre(null);
       setFournisseursSelectionnes([]);
       setTermeRecherche(facture.numero);
-      setFactureSelectionnee(factureSauvegardee);
+      setFactureSelectionnee(null);
+      setDocumentSelectionne(documentDepuisFacture(factureSauvegardee));
       setErreur(null);
     } catch (error) {
       setErreur(
@@ -468,8 +595,9 @@ function App() {
     };
 
     await ajouterDevis(devis);
-    setDevisSelectionne(devis);
-    setVueActive('devis');
+    setDevisSelectionne(null);
+    setDocumentSelectionne(documentDepuisDevis(devis));
+    setVueActive('pieces');
   };
 
   // Importer un devis depuis un PDF avec sélection manuelle du fournisseur si nécessaire
@@ -498,161 +626,18 @@ function App() {
     }
   };
 
-  // Charger un fichier avec contrôle (éditeur)
-  const handleChargerAvecControle = async (chemin: string, _fournisseur: Fournisseur) => {
-    setErreur(null);
-    
-    try {
-      // Charger le fichier depuis le chemin public/
-      const nomFichier = chemin.split(/[/\\]/).pop() || chemin;
-      const cheminPublic = chemin.startsWith('/') ? chemin : `/${chemin}`;
-      
-      // Récupérer le fichier depuis le serveur
-      const response = await fetch(cheminPublic);
-      if (!response.ok) {
-        throw new Error(`Impossible de charger le fichier: ${response.statusText}`);
-      }
-      
-      const blob = await response.blob();
-      const fichier = new File([blob], nomFichier, { type: 'application/pdf' });
-      
-      // Stocker le fichier et le fournisseur pour l'éditeur
-      setFichierPourEditeur(fichier);
-      
-      // Basculer vers l'éditeur
-      setVueActive('editeur');
-    } catch (error) {
-      setErreur(`Erreur lors du chargement du fichier: ${error instanceof Error ? error.message : 'Erreur inconnue'}`);
-    }
-  };
-
   const handleCloseDetails = () => {
     setFactureSelectionnee(null);
   };
 
-  // Obtenir la liste des chemins de factures déjà chargées
-  const facturesChargees = toutesLesFactures
-    .map(f => f.fichierPDF)
-    .filter((chemin): chemin is string => chemin !== undefined);
-
-  // Charger un fichier depuis les dossiers fournisseurs
-  const handleChargerFichier = async (chemin: string, fournisseur: Fournisseur) => {
-    setErreur(null);
-    setFichierEnChargement(chemin);
-
-    try {
-      console.log('Début du chargement:', chemin, fournisseur);
-      
-      // Charger le fichier directement depuis le chemin public/
-      const nomFichier = chemin.split(/[/\\]/).pop() || chemin;
-      const cheminPublic = chemin.startsWith('/') ? chemin : `/${chemin}`;
-      
-      console.log('Chargement du fichier depuis:', cheminPublic);
-      
-      // Récupérer le fichier depuis le serveur
-      const response = await fetch(cheminPublic);
-      if (!response.ok) {
-        throw new Error(`Impossible de charger le fichier: ${response.statusText}`);
-      }
-      
-      const blob = await response.blob();
-      const fichier = new File([blob], nomFichier, { type: 'application/pdf' });
-      
-      console.log('Fichier chargé, début du parsing...', fichier.name);
-
-      // Parser le fichier sélectionné
-      let resultat;
-      try {
-        resultat = await parserFacture(fichier, fournisseur);
-        console.log('Parsing terminé:', resultat);
-      } catch (parseError) {
-        console.error('Erreur lors du parsing:', parseError);
-        throw new Error(`Erreur lors du parsing du PDF: ${parseError instanceof Error ? parseError.message : 'Erreur inconnue'}`);
-      }
-
-      // Afficher les avertissements mais continuer
-      if (resultat.avertissements && resultat.avertissements.length > 0) {
-        console.warn('Avertissements lors du parsing:', resultat.avertissements);
-      }
-
-      // Les erreurs seront gérées après l'ajout de la facture
-
-      // Vérifier si la facture existe déjà (par nom de fichier)
-      const existeDeja = toutesLesFactures.some(
-        f => {
-          const factureNom = f.fichierPDF?.split(/[/\\]/).pop() || f.fichierPDF || '';
-          return factureNom === nomFichier && f.fournisseur === fournisseur;
-        }
-      );
-
-      if (!existeDeja) {
-        // Mémoriser le PDF original pour pouvoir le visualiser plus tard
-        const pdfOriginal = await lireFichierEnDataURL(fichier);
-        const factureComplete = {
-          ...resultat.facture,
-          fichierPDF: nomFichier,
-          pdfOriginal,
-        };
-        ajouterFacture(factureComplete);
-        
-        // Attendre un peu pour que la sauvegarde soit terminée
-        await new Promise(resolve => setTimeout(resolve, 100));
-        
-        // Recharger toutes les factures depuis le localStorage pour synchroniser
-        // Créer un nouvel array pour forcer la mise à jour React
-        const facturesChargees = [...chargerFactures()];
-        console.log('[ChargerFichier] Factures chargées après ajout:', facturesChargees.length);
-        remplacerFactures(facturesChargees);
-        
-        // Si on est dans la vue fournisseur, s'assurer que le fournisseur est sélectionné
-        if (vueActive === 'factures') {
-          if (fournisseursSelectionnes.length > 0 && !fournisseursSelectionnes.includes(fournisseur)) {
-            setFournisseursSelectionnes([...fournisseursSelectionnes, fournisseur]);
-          } else if (fournisseursSelectionnes.length === 0 && !fournisseurFiltre) {
-            setFournisseursSelectionnes([fournisseur]);
-            setFournisseurFiltre(fournisseur);
-          }
-        }
-        
-        // Basculer vers la vue factures et sélectionner la facture
-        setVueActive('factures');
-        setFactureSelectionnee(factureComplete);
-        
-        // Forcer un nouveau rechargement après un court délai pour s'assurer que tout est synchronisé
-        setTimeout(() => {
-          const facturesChargees2 = [...chargerFactures()];
-          console.log('[ChargerFichier] Rechargement final:', facturesChargees2.length, 'factures');
-          remplacerFactures(facturesChargees2);
-        }, 200);
-        console.log('Facture ajoutée avec succès:', resultat.facture.numero, resultat.facture);
-        
-        // Afficher un message de succès ou d'avertissement
-        if (resultat.erreurs && resultat.erreurs.length > 0) {
-          setErreur(`⚠️ Facture créée avec des avertissements: ${resultat.erreurs.join(', ')}. Vérifiez les données.`);
-        } else if (resultat.avertissements && resultat.avertissements.length > 0) {
-          setErreur(`ℹ️ Facture créée: ${resultat.avertissements.join(', ')}`);
-        } else {
-          setErreur(null); // Pas d'erreur, tout est OK
-        }
-      } else {
-        setErreur('Cette facture a déjà été chargée');
-        console.log('Facture déjà existante:', nomFichier);
-      }
-    } catch (error) {
-      const messageErreur = error instanceof Error 
-        ? error.message 
-        : 'Erreur lors du chargement du fichier';
-      console.error('Erreur lors du chargement du fichier:', error);
-      
-      // Afficher l'erreur seulement si ce n'est pas une annulation
-      if (messageErreur !== 'Sélection annulée' && 
-          !messageErreur.includes('Timeout') &&
-          !messageErreur.includes('annulée')) {
-        setErreur(messageErreur);
-      }
-    } finally {
-      setFichierEnChargement(null);
+  const handleDocumentUpdate = async (document: DocumentFournisseur) => {
+    await mettreAJourDocument(document);
+    if (document.typeDocument === 'devis') {
+      await mettreAJourDevis(documentVersDevis(document));
+    } else {
+      mettreAJourFacture(documentVersFacture(document));
     }
+    setDocumentSelectionne(document);
   };
 
   const handleExporterSauvegardeGlobale = async () => {
@@ -790,11 +775,12 @@ function App() {
       return;
     }
 
-    setVueActive('factures');
+    setVueActive('pieces');
     setFournisseurFiltre(null);
     setFournisseursSelectionnes([]);
     setTermeRecherche(factureTrouvee.numero);
-    setFactureSelectionnee(factureTrouvee);
+    setFactureSelectionnee(null);
+    setDocumentSelectionne(documentDepuisFacture(factureTrouvee));
   };
 
   const handleRestaurerChange = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -840,162 +826,95 @@ function App() {
     }
   };
 
+  const vuePrincipaleActive:
+    | 'pieces'
+    | 'import'
+    | 'reglements'
+    | 'livraisons'
+    | 'statistiques'
+    | 'administration' =
+    vueActive === 'factures' || vueActive === 'devis' || vueActive === 'editeur' || vueActive === 'administration'
+      ? 'administration'
+      : vueActive;
+
+  const ouvrirVuePrincipale = (
+    vue: 'pieces' | 'import' | 'reglements' | 'livraisons' | 'statistiques' | 'administration'
+  ) => {
+    setVueActive(vue);
+    setFactureSelectionnee(null);
+    setDevisSelectionne(null);
+    setDocumentSelectionne(null);
+  };
+
+  const estModeExpert = vueActive === 'factures' || vueActive === 'devis' || vueActive === 'editeur';
+
   return (
     <div className="app">
       <header className="app__header">
         <div className="app__header-content">
-          <h1 className="app__title">
-            <FileText size={32} />
-            Gestion des Factures Fournisseurs
-          </h1>
+          <div>
+            <h1 className="app__title">
+              <FileText size={32} />
+              Suivi des pieces fournisseurs
+            </h1>
+            <p className="app__subtitle">
+              Pieces, paiements, receptions et outils d'administration
+            </p>
+          </div>
           <div className="app__header-actions">
             <nav className="app__nav">
               <button
                 type="button"
-                onClick={() => {
-                  setVueActive('factures');
-                  setFactureSelectionnee(null);
-                  setDevisSelectionne(null);
-                }}
-                className={`app__nav-btn ${vueActive === 'factures' ? 'app__nav-btn--active' : ''}`}
+                onClick={() => ouvrirVuePrincipale('pieces')}
+                className={`app__nav-btn ${vuePrincipaleActive === 'pieces' ? 'app__nav-btn--active' : ''}`}
               >
-                <FileText size={20} />
-                Factures
+                <Layers3 size={20} />
+                Pieces
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setVueActive('devis');
-                  setFactureSelectionnee(null);
-                  setDevisSelectionne(null);
-                }}
-                className={`app__nav-btn ${vueActive === 'devis' ? 'app__nav-btn--active' : ''}`}
-              >
-                <FileSignature size={20} />
-                Devis
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setVueActive('statistiques');
-                  setFactureSelectionnee(null);
-                }}
-                className={`app__nav-btn ${vueActive === 'statistiques' ? 'app__nav-btn--active' : ''}`}
-              >
-                <BarChart3 size={20} />
-                Statistiques
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setVueActive('import');
-                  setFactureSelectionnee(null);
-                }}
-                className={`app__nav-btn ${vueActive === 'import' ? 'app__nav-btn--active' : ''}`}
+                onClick={() => ouvrirVuePrincipale('import')}
+                className={`app__nav-btn ${vuePrincipaleActive === 'import' ? 'app__nav-btn--active' : ''}`}
               >
                 <Upload size={20} />
-                Importer
+                Import
               </button>
               <button
                 type="button"
-                onClick={() => {
-                  setVueActive('editeur');
-                  setFactureSelectionnee(null);
-                }}
-                className={`app__nav-btn ${vueActive === 'editeur' ? 'app__nav-btn--active' : ''}`}
-              >
-                <Edit size={20} />
-                Éditeur
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setVueActive('reglements');
-                  setFactureSelectionnee(null);
-                }}
-                className={`app__nav-btn ${vueActive === 'reglements' ? 'app__nav-btn--active' : ''}`}
+                onClick={() => ouvrirVuePrincipale('reglements')}
+                className={`app__nav-btn ${vuePrincipaleActive === 'reglements' ? 'app__nav-btn--active' : ''}`}
               >
                 <CreditCard size={20} />
-                Règlements
+                Paiements
+              </button>
+              <button
+                type="button"
+                onClick={() => ouvrirVuePrincipale('livraisons')}
+                className={`app__nav-btn ${vuePrincipaleActive === 'livraisons' ? 'app__nav-btn--active' : ''}`}
+              >
+                <Package size={20} />
+                Receptions
+              </button>
+              <button
+                type="button"
+                onClick={() => ouvrirVuePrincipale('statistiques')}
+                className={`app__nav-btn ${vuePrincipaleActive === 'statistiques' ? 'app__nav-btn--active' : ''}`}
+              >
+                <BarChart3 size={20} />
+                Analyse
+              </button>
+              <button
+                type="button"
+                onClick={() => ouvrirVuePrincipale('administration')}
+                className={`app__nav-btn ${vuePrincipaleActive === 'administration' ? 'app__nav-btn--active' : ''}`}
+              >
+                <Settings size={20} />
+                Administration
               </button>
             </nav>
-            <button
-              type="button"
-              className="app__export-btn"
-              onClick={handleExporterSauvegardeGlobale}
-            >
-              <Download size={18} />
-              Export global + Google Drive
-            </button>
-            <button
-              type="button"
-              className="app__restore-btn"
-              onClick={handleChoisirDossierSauvegarde}
-              title={`Dossier cible : ${CHEMIN_DOSSIER_SAUVEGARDE}`}
-            >
-              <FolderOpen size={18} />
-              Dossier sauvegarde
-            </button>
-            <button
-              type="button"
-              className="app__restore-btn"
-              onClick={handleRestaurerClick}
-            >
-              <RotateCcw size={18} />
-              Restaurer
-            </button>
-            <button
-              type="button"
-              onClick={handleDiagnostic}
-              style={{
-                padding: '0.5rem 1rem',
-                border: '1px solid #f59e0b',
-                borderRadius: '6px',
-                background: 'white',
-                color: '#f59e0b',
-                cursor: 'pointer',
-                fontSize: '0.9rem',
-                fontWeight: '500',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                marginLeft: '0.5rem',
-              }}
-              title="Diagnostiquer et récupérer les factures perdues"
-            >
-              🔍 Diagnostic
-            </button>
-            <button
-              type="button"
-              onClick={handleRetrouverFacture}
-              style={{
-                padding: '0.5rem 1rem',
-                border: '1px solid #2563eb',
-                borderRadius: '6px',
-                background: 'white',
-                color: '#2563eb',
-                cursor: 'pointer',
-                fontSize: '0.9rem',
-                fontWeight: '500',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                marginLeft: '0.5rem',
-              }}
-              title="Retrouver une facture par numéro"
-            >
-              🔎 Retrouver facture
-            </button>
-            <input
-              ref={inputRestaurationRef}
-              type="file"
-              accept="application/json"
-              style={{ display: 'none' }}
-              onChange={handleRestaurerChange}
-            />
           </div>
           {messageSauvegarde && (
-            <div style={{ color: '#059669', fontWeight: 600, fontSize: '0.9rem' }}>
+            <div className="app__save-message">
               {messageSauvegarde}
             </div>
           )}
@@ -1003,6 +922,189 @@ function App() {
       </header>
 
       <main className="app__main">
+        {estModeExpert && (
+          <div className="app__expert-banner">
+            <div>
+              <strong>Mode expert</strong>
+              <span> Cette vue historique reste disponible, mais le flux principal passe maintenant par `Pieces` et `Administration`.</span>
+            </div>
+            <button
+              type="button"
+              className="app__restore-btn"
+              onClick={() => ouvrirVuePrincipale('administration')}
+            >
+              Retour administration
+            </button>
+          </div>
+        )}
+
+        {vueActive === 'administration' && (
+          <div className="app__admin">
+            <div className="app__page-header">
+              <h2>Administration</h2>
+              <p>
+                Les fonctions techniques et de maintenance sont regroupees ici pour alleger
+                l'usage quotidien de l'application.
+              </p>
+            </div>
+
+            <div className="app__admin-grid">
+              <section className="app__admin-card">
+                <h3>Sauvegarde et restauration</h3>
+                <p>Exporter les donnees, choisir le dossier cible et restaurer une sauvegarde globale.</p>
+                <div className="app__admin-actions">
+                  <button
+                    type="button"
+                    className="app__export-btn"
+                    onClick={handleExporterSauvegardeGlobale}
+                  >
+                    <Download size={18} />
+                    Export global + Google Drive
+                  </button>
+                  <button
+                    type="button"
+                    className="app__restore-btn"
+                    onClick={handleChoisirDossierSauvegarde}
+                    title={`Dossier cible : ${CHEMIN_DOSSIER_SAUVEGARDE}`}
+                  >
+                    <FolderOpen size={18} />
+                    Dossier sauvegarde
+                  </button>
+                  <button
+                    type="button"
+                    className="app__restore-btn"
+                    onClick={handleRestaurerClick}
+                  >
+                    <RotateCcw size={18} />
+                    Restaurer
+                  </button>
+                </div>
+              </section>
+
+              <section className="app__admin-card">
+                <h3>Controle et diagnostic</h3>
+                <p>Retrouver une facture, lancer le diagnostic de stockage ou ouvrir l'editeur expert.</p>
+                <div className="app__admin-actions">
+                  <button
+                    type="button"
+                    className="app__restore-btn"
+                    onClick={handleDiagnostic}
+                    title="Diagnostiquer et recuperer les factures perdues"
+                  >
+                    🔍 Diagnostic
+                  </button>
+                  <button
+                    type="button"
+                    className="app__restore-btn"
+                    onClick={handleRetrouverFacture}
+                    title="Retrouver une facture par numero"
+                  >
+                    🔎 Retrouver facture
+                  </button>
+                  <button
+                    type="button"
+                    className="app__restore-btn"
+                    onClick={() => {
+                      setVueActive('editeur');
+                      setFactureSelectionnee(null);
+                      setDevisSelectionne(null);
+                    }}
+                  >
+                    <Edit size={18} />
+                    Editeur expert
+                  </button>
+                </div>
+              </section>
+
+              <section className="app__admin-card">
+                <h3>Compatibilité</h3>
+                <p>
+                  Ces ecrans legacy restent disponibles pendant la transition, mais la vue principale recommandee est `Pieces`.
+                </p>
+                <div className="app__admin-actions">
+                  <button
+                    type="button"
+                    className="app__restore-btn"
+                    onClick={() => setVueActive('factures')}
+                  >
+                    <FileText size={18} />
+                    Vue factures
+                  </button>
+                  <button
+                    type="button"
+                    className="app__restore-btn"
+                    onClick={() => setVueActive('devis')}
+                  >
+                    <FileSignature size={18} />
+                    Ancienne vue devis
+                  </button>
+                </div>
+              </section>
+            </div>
+          </div>
+        )}
+
+        {vueActive === 'pieces' && (
+          <div className="app__vue-fournisseur-layout">
+            <div className="app__vue-fournisseur">
+              {!documentSelectionne && (
+                <>
+                  <div className="app__page-header">
+                    <h2>Pieces fournisseurs</h2>
+                    <p>
+                      Vue principale de suivi des factures, acomptes et soldes fournisseurs.
+                    </p>
+                  </div>
+                  <ListeDocuments
+                    documents={documentsFiltres}
+                    totalDocuments={tousLesDocuments.length}
+                    termeRecherche={termeRechercheDocuments}
+                    onTermeRechercheChange={setTermeRechercheDocuments}
+                    fournisseurFiltre={fournisseurFiltreDocuments}
+                    onFournisseurFiltreChange={setFournisseurFiltreDocuments}
+                    onDocumentSelect={handleDocumentSelect}
+                    documentSelectionne={documentSelectionne}
+                  />
+                </>
+              )}
+            </div>
+            {documentSelectionne && (
+              <div className="app__vue-fournisseur-details">
+                <div style={{ marginBottom: '0.75rem' }}>
+                  <button
+                    type="button"
+                    onClick={() => setDocumentSelectionne(null)}
+                    className="details-facture__modal-btn details-facture__modal-btn--secondary"
+                  >
+                    Retour a la liste des pieces
+                  </button>
+                </div>
+                <DetailsDocument
+                  document={documentSelectionne}
+                  tousLesDocuments={tousLesDocuments}
+                  toutesLesFactures={toutesLesFactures}
+                  onClose={() => setDocumentSelectionne(null)}
+                  onUpdate={(documentModifie) => {
+                    void handleDocumentUpdate(documentModifie);
+                  }}
+                  onDeleteFacture={(id) => {
+                    const confirmer = window.confirm(
+                      'Êtes-vous sûr de vouloir supprimer cette facture ?\n\n' +
+                        'Cette action est définitive et tous les règlements associés à cette facture seront également supprimés.'
+                    );
+                    if (!confirmer) {
+                      return;
+                    }
+                    supprimerFacture(id);
+                    setDocumentSelectionne(null);
+                  }}
+                  onTransformerEnFacture={handleTransformerDevisEnFacture}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         {vueActive === 'factures' && (
           <div className="app__vue-fournisseur-layout">
             <div className="app__vue-fournisseur">
@@ -1167,15 +1269,16 @@ function App() {
                   onClose={() => setDevisSelectionne(null)}
                   onTransformerEnFacture={handleTransformerDevisEnFacture}
                   onUpdate={(devisModifie) => {
-                    void mettreAJourDevis(devisModifie);
-                    setDevisSelectionne(devisModifie);
+                    void handleDevisMisAJour(devisModifie);
                   }}
                 />
               </div>
             )}
             {editeurDevisOuvert && (
               <EditeurDevis
-                onSauvegarder={handleDevisCree}
+                onSauvegarder={(devis) => {
+                  void handleDevisCree(devis);
+                }}
                 onFermer={() => setEditeurDevisOuvert(false)}
               />
             )}
@@ -1325,73 +1428,67 @@ function App() {
 
         {vueActive === 'import' && (
           <div className="app__import">
-            <div className="app__import-section">
-              <h2 style={{ marginBottom: '1rem', fontSize: '1.25rem', color: '#1a1a1a' }}>
-                Fichiers disponibles dans les dossiers fournisseurs
-              </h2>
-              <p style={{ marginBottom: '2rem', color: '#6b7280', fontSize: '0.9rem' }}>
-                Les fichiers suivants sont référencés dans les dossiers RB DRINKS 2025, LEHMANN F 2025 et ITALESSE 2025.
-                Cliquez sur "Charger" pour créer une facture à partir de ces fichiers.
-                <br />
-                <strong>Note :</strong> Pour charger le contenu réel du PDF, vous devrez sélectionner le fichier manuellement via le formulaire d'import ci-dessous.
+            <div className="app__page-header">
+              <h2>Import de factures PDF</h2>
+              <p>
+                Un écran d&apos;import unique, plus propre, qui conserve l&apos;auto-détection du
+                fournisseur, les parsers existants et les corrections déjà apprises.
               </p>
-              <ListeFichiersDisponibles
-                onChargerFichier={handleChargerFichier}
-                onChargerAvecControle={handleChargerAvecControle}
-                facturesChargees={facturesChargees}
-                chargementEnCours={fichierEnChargement}
-              />
             </div>
 
-            <div className="app__import-section" style={{ marginTop: '3rem', paddingTop: '3rem', borderTop: '2px solid #e5e7eb' }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-                <h2 style={{ margin: 0, fontSize: '1.25rem', color: '#1a1a1a' }}>
-                  Importer de nouveaux fichiers PDF
-                </h2>
-                <button
-                  type="button"
-                  onClick={() => {
-                    setVueActive('editeur');
+            <div className="app__import-grid">
+              <section className="app__import-card app__import-card--primary">
+                <div className="app__import-card-header">
+                  <div>
+                    <h3>Import automatique</h3>
+                    <p>
+                      Déposez les PDF, laissez l&apos;application détecter le fournisseur et parser les
+                      lignes automatiquement.
+                    </p>
+                  </div>
+                </div>
+                <div className="app__import-note">
+                  <strong>Conservé :</strong> les parsers spécifiques par fournisseur, l&apos;apprentissage
+                  des corrections et l&apos;enregistrement direct dans les factures fournisseurs.
+                </div>
+                <ImportPDF
+                  onImport={handleImport}
+                  importEnCours={importEnCours}
+                  onFichiersChange={(fichiers) => {
+                    setFichierPourEditeur(fichiers.length > 0 ? fichiers[0] : null);
                   }}
-                  style={{
-                    padding: '0.5rem 1rem',
-                    border: '1px solid #3b82f6',
-                    borderRadius: '6px',
-                    background: 'white',
-                    color: '#3b82f6',
-                    cursor: 'pointer',
-                    fontSize: '0.9rem',
-                    fontWeight: '500',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '0.5rem',
-                  }}
-                  title="Passer par l'éditeur pour contrôler et corriger avant l'import"
-                >
-                  <Edit size={16} />
-                  Import avec contrôle
-                </button>
-              </div>
-              <div style={{ 
-                padding: '1rem', 
-                background: '#eff6ff', 
-                border: '1px solid #bfdbfe', 
-                borderRadius: '6px', 
-                marginBottom: '1.5rem',
-                fontSize: '0.9rem',
-                color: '#1e40af'
-              }}>
-                <strong>💡 Mode automatique :</strong> Les factures sont parsées automatiquement en utilisant les règles apprises lors de vos corrections précédentes. 
-                Pour un contrôle manuel et des corrections avant l'import, cliquez sur "Import avec contrôle" ci-dessus.
-              </div>
-              <ImportPDF
-                onImport={handleImport}
-                importEnCours={importEnCours}
-                onFichiersChange={(fichiers) => {
-                  // Stocker le premier fichier pour l'éditeur
-                  setFichierPourEditeur(fichiers.length > 0 ? fichiers[0] : null);
-                }}
-              />
+                />
+              </section>
+
+              <aside className="app__import-card">
+                <div className="app__import-card-header">
+                  <div>
+                    <h3>Contrôle manuel</h3>
+                    <p>
+                      L&apos;éditeur expert reste disponible pour relire, corriger ou compléter un parsing
+                      avant enregistrement.
+                    </p>
+                  </div>
+                </div>
+                <div className="app__import-side-content">
+                  <div className="app__import-note app__import-note--neutral">
+                    Le flux recommandé est l&apos;import automatique. Ouvrez l&apos;éditeur seulement pour les
+                    documents difficiles ou atypiques.
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setVueActive('editeur');
+                    }}
+                    className="app__restore-btn"
+                    style={{ width: '100%', justifyContent: 'center' }}
+                    title="Passer par l'éditeur pour contrôler et corriger avant l'import"
+                  >
+                    <Edit size={16} />
+                    Ouvrir l&apos;éditeur de contrôle
+                  </button>
+                </div>
+              </aside>
             </div>
 
             {erreur && (
@@ -1441,7 +1538,38 @@ function App() {
             <Reglements factures={toutesLesFactures} devis={tousLesDevis} />
           </div>
         )}
+
+        {vueActive === 'livraisons' && (
+          <div className="app__reglements">
+            <Livraisons
+              devis={tousLesDevis}
+              factures={toutesLesFactures}
+              onUpdateDevis={(devisModifie) => {
+                void (async () => {
+                  await handleDevisMisAJour(devisModifie);
+                  await remplacerDevis(
+                    tousLesDevis.map((d) => (d.id === devisModifie.id ? devisModifie : d))
+                  );
+                })();
+              }}
+              onUpdateFacture={(factureModifiee) => {
+                mettreAJourFacture(factureModifiee);
+                remplacerFactures(
+                  toutesLesFactures.map((f) => (f.id === factureModifiee.id ? factureModifiee : f))
+                );
+              }}
+            />
+          </div>
+        )}
       </main>
+
+      <input
+        ref={inputRestaurationRef}
+        type="file"
+        accept="application/json"
+        style={{ display: 'none' }}
+        onChange={handleRestaurerChange}
+      />
     </div>
   );
 }

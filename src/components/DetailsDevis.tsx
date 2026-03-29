@@ -1,5 +1,5 @@
 /**
- * Détails d'un devis + comparaison avec les factures liées
+ * Détails d'une facture principale compatible legacy
  */
 
 import { useState } from 'react';
@@ -17,8 +17,8 @@ import {
 } from 'lucide-react';
 import type { Devis } from '../types/devis';
 import type { Facture } from '../types/facture';
-import { comparerDevisAvecFactures } from '../services/devisService';
-import { calculerEtatReglement } from '../services/reglementService';
+import { calculerTotalAcompteReferenceTTC, comparerDevisAvecFactures } from '../services/devisService';
+import { calculerEtatReglement, chargerReglements } from '../services/reglementService';
 import { EditeurDevis } from './EditeurDevis';
 import { imprimerPdfSimple, telechargerCSVSimple } from '../utils/exportSimplifie';
 import './DetailsFacture.css';
@@ -29,6 +29,7 @@ interface DetailsDevisProps {
   onClose: () => void;
   onUpdate?: (devis: Devis) => void;
   onTransformerEnFacture?: (devis: Devis) => void;
+  modeAffichage?: 'devis' | 'facture_principale';
 }
 
 export function DetailsDevis({
@@ -37,6 +38,7 @@ export function DetailsDevis({
   onClose,
   onUpdate,
   onTransformerEnFacture,
+  modeAffichage = 'devis',
 }: DetailsDevisProps) {
   const [editionMode, setEditionMode] = useState(false);
 
@@ -44,12 +46,13 @@ export function DetailsDevis({
     return (
       <div className="details-facture details-facture--empty">
         <FileText size={64} />
-        <p>Sélectionnez un devis pour voir les détails</p>
+        <p>Sélectionnez une facture pour voir les détails</p>
       </div>
     );
   }
 
   const comparaison = comparerDevisAvecFactures(devis, toutesLesFactures);
+  const reglements = chargerReglements();
   const totalDevisHT = comparaison.devis.totalHT || 0;
   const totalDevisTVA = comparaison.devis.totalTVA || 0;
   const totalFacturesHT = comparaison.facturesLiees.reduce(
@@ -102,21 +105,23 @@ export function DetailsDevis({
   }));
 
   const handleExporterCSV = () => {
-    const nom = `devis-${devis.numero}-${devis.fournisseur}`;
+    const nom = `facture-${devis.numero}-${devis.fournisseur}`;
     telechargerCSVSimple(nom, lignesExport);
   };
 
   const handleExporterPDF = () => {
-    const titre = `Devis ${devis.numero} — ${devis.fournisseur}`;
+    const titre = `${estModeFacturePrincipale ? 'Facture principale' : 'Facture fournisseur'} ${devis.numero} — ${devis.fournisseur}`;
     const meta = [
-      `Date devis: ${formaterDate(devis.date)}`,
-      `Total devis TTC: ${formaterMontant(comparaison.totalDevisTTC)}`,
+      `Date document: ${formaterDate(devis.date)}`,
+      `Total TTC: ${formaterMontant(comparaison.totalDevisTTC)}`,
     ];
     imprimerPdfSimple(titre, meta, lignesExport);
   };
 
   const aFacturesLiees = comparaison.facturesLiees.length > 0;
   const ecartGlobalSignificatif = aFacturesLiees && Math.abs(comparaison.ecartGlobalTTC) > 0.01;
+  const estModeFacturePrincipale = modeAffichage === 'facture_principale';
+  const libelleTypePiece = estModeFacturePrincipale ? 'Facture principale' : 'Facture fournisseur';
 
   const totalHTFOB =
     devis.donneesBrutes && typeof devis.donneesBrutes.totalHTFOB === 'number'
@@ -144,27 +149,37 @@ export function DetailsDevis({
             },
           ]
         : [];
-  const estSolde = (note?: string) => (note || '').toLowerCase().includes('solde');
-  const totalAcomptesTTC = acomptesDemandes.reduce(
-    (sum, acompte) => (estSolde(acompte.note) ? sum : sum + (acompte.montantTTC || 0)),
-    0
-  );
   const totalAcomptesAvecSoldeTTC = acomptesDemandes.reduce(
     (sum, acompte) => sum + (acompte.montantTTC || 0),
     0
   );
+  const totalAcomptesTTC = estModeFacturePrincipale
+    ? totalAcomptesAvecSoldeTTC
+    : calculerTotalAcompteReferenceTTC(
+        devis,
+        comparaison.facturesLiees,
+        reglements
+      );
   const baseApresAcompteTTC = Math.max(0, comparaison.totalDevisTTC - totalAcomptesTTC);
   const resteApresAcompteTTC = baseApresAcompteTTC;
 
   // Total déjà payé sur les factures liées (en TTC), basé sur les règlements
-  const totalPayeTTC = aFacturesLiees
-    ? comparaison.facturesLiees.reduce((sum, facture) => {
-        const etat = calculerEtatReglement(facture);
-        return sum + etat.montantRegle;
-      }, 0)
-    : totalAcomptesAvecSoldeTTC;
+  const totalPayeTTC = estModeFacturePrincipale
+    ? reglements
+        .filter(
+          (reglement) =>
+            reglement.statut !== 'annule' &&
+            comparaison.facturesLiees.some((facture) => facture.id === reglement.factureId)
+        )
+        .reduce((sum, reglement) => sum + (reglement.montant || 0), 0)
+    : aFacturesLiees
+      ? comparaison.facturesLiees.reduce((sum, facture) => {
+          const etat = calculerEtatReglement(facture);
+          return sum + etat.montantRegle;
+        }, 0)
+      : totalAcomptesAvecSoldeTTC;
 
-  // Reste à payer TTC sur le devis (basé sur les paiements réels)
+  // Reste à payer TTC sur la facture (basé sur les paiements réels)
   const resteAPayerTTC = Math.max(0, comparaison.totalDevisTTC - totalPayeTTC);
   // Reste à livrer TTC (basé sur les livraisons réelles)
   const resteALivrerTTCApresAcompte = Math.max(
@@ -191,7 +206,7 @@ export function DetailsDevis({
     if (!onTransformerEnFacture) return;
     if (factureLieeTrouvee) {
       const ok = window.confirm(
-        'Une facture liée existe déjà pour ce devis. Voulez-vous vraiment refacturer ?'
+        'Une facture liée existe déjà pour cette facture. Voulez-vous vraiment refacturer ?'
       );
       if (!ok) return;
     }
@@ -210,9 +225,10 @@ export function DetailsDevis({
     <div className="details-facture">
       <div className="details-facture__header">
         <div>
-          <h2>Détails du devis</h2>
+          <h2>Fiche pièce fournisseur</h2>
           <div className="details-facture__meta">
-            <span className="details-facture__badge">{devis.fournisseur}</span>
+            <span className="details-facture__badge">{libelleTypePiece}</span>
+            <span className="details-facture__badge details-facture__badge--secondary">{devis.fournisseur}</span>
             <span className="details-facture__numero">{devis.numero}</span>
           </div>
         </div>
@@ -235,7 +251,7 @@ export function DetailsDevis({
           >
             <Download size={18} />
           </button>
-          {onTransformerEnFacture && (
+          {!estModeFacturePrincipale && onTransformerEnFacture && (
             <button
               type="button"
               onClick={handleFacturerClick}
@@ -245,7 +261,7 @@ export function DetailsDevis({
               title="Transformer en facture"
             >
               <FileText size={18} />
-              {devis.statut === 'facture_soldee' ? 'Refacturer' : 'Facturer'}
+              {devis.statut === 'facture_soldee' ? 'Refacturer' : 'Créer la facture'}
             </button>
           )}
           {onUpdate && (
@@ -253,8 +269,8 @@ export function DetailsDevis({
               type="button"
               onClick={() => setEditionMode(true)}
               className="details-facture__edit-btn"
-              aria-label="Éditer le devis"
-              title="Éditer le devis"
+              aria-label="Éditer la facture"
+              title="Éditer la facture"
             >
               <Edit size={18} />
             </button>
@@ -270,7 +286,7 @@ export function DetailsDevis({
               style={{ display: 'flex', alignItems: 'center', gap: '0.25rem' }}
             >
               <Link2 size={18} />
-              Lier / délier des factures
+              {estModeFacturePrincipale ? 'Gérer les acomptes liés' : 'Gérer les factures liées'}
             </button>
           )}
           <button
@@ -285,7 +301,38 @@ export function DetailsDevis({
       </div>
 
       <div className="details-facture__content">
-        {aFacturesLiees ? (
+        <div className="details-facture__summary-grid">
+          <div className="details-facture__summary-card">
+            <span className="details-facture__summary-label">Type de pièce</span>
+            <span className="details-facture__summary-value">{libelleTypePiece}</span>
+          </div>
+          <div className="details-facture__summary-card">
+            <span className="details-facture__summary-label">
+              Total facture TTC
+            </span>
+            <span className="details-facture__summary-value">
+              {formaterMontant(comparaison.totalDevisTTC)}
+            </span>
+          </div>
+          <div className="details-facture__summary-card">
+            <span className="details-facture__summary-label">Réglé TTC</span>
+            <span className="details-facture__summary-value">{formaterMontant(totalPayeTTC)}</span>
+          </div>
+          <div className="details-facture__summary-card">
+            <span className="details-facture__summary-label">Reste à payer TTC</span>
+            <span className="details-facture__summary-value">{formaterMontant(resteAPayerTTC)}</span>
+          </div>
+        </div>
+
+        {estModeFacturePrincipale ? (
+          <div className="details-facture__alert details-facture__alert--success">
+            <CheckCircle size={18} />
+            <div>
+              <strong>Facture principale avec acomptes rattachés.</strong> Les montants ci-dessous
+              reflètent les acomptes déjà facturés et réglés, sans afficher d’écart entre factures.
+            </div>
+          </div>
+        ) : aFacturesLiees ? (
           <div
             className={`details-facture__alert ${
               ecartGlobalSignificatif
@@ -297,22 +344,22 @@ export function DetailsDevis({
               <>
                 <AlertTriangle size={18} />
                 <div>
-                  <strong>Écart entre devis et factures.</strong>
+                  <strong>Écart entre la facture et les factures liées.</strong>
                   <ul>
                     <li>
-                      Devis HT {formaterMontant(totalDevisHT)} vs facturé HT{' '}
+                      Facture HT {formaterMontant(totalDevisHT)} vs factures liées HT{' '}
                       {formaterMontant(totalFacturesHT)} (écart{' '}
                       {formaterMontant(ecartGlobalHT)}
                       ).
                     </li>
                     <li>
-                      Devis TTC {formaterMontant(comparaison.totalDevisTTC)} vs facturé TTC{' '}
+                      Facture TTC {formaterMontant(comparaison.totalDevisTTC)} vs factures liées TTC{' '}
                       {formaterMontant(comparaison.totalFacturesTTC)} (écart{' '}
                       {formaterMontant(comparaison.ecartGlobalTTC)}
                       ).
                     </li>
                     <li>
-                      TVA devis {formaterMontant(totalDevisTVA)} vs TVA facturée{' '}
+                      TVA facture {formaterMontant(totalDevisTVA)} vs TVA des factures liées{' '}
                       {formaterMontant(totalFacturesTVA)} (écart{' '}
                       {formaterMontant(ecartGlobalTVA)}
                       ).
@@ -328,7 +375,7 @@ export function DetailsDevis({
               <>
                 <CheckCircle size={18} />
                 <div>
-                  <strong>Devis conforme.</strong> Le total TTC facturé correspond au total du devis.
+                  <strong>Facture cohérente.</strong> Le total TTC des factures liées correspond au total attendu.
                 </div>
               </>
             )}
@@ -338,7 +385,7 @@ export function DetailsDevis({
             <CheckCircle size={18} />
             <div>
               <strong>Aucune facture liée pour l’instant.</strong> L’écart sera calculé dès que des
-              factures (acomptes / solde) seront reliées à ce devis.
+              factures (acomptes / solde) seront rattachées à cette facture.
             </div>
           </div>
         )}
@@ -363,7 +410,9 @@ export function DetailsDevis({
             <div className="details-facture__info-item">
               <Calendar size={18} />
               <div>
-                <span className="details-facture__info-label">Date devis</span>
+                <span className="details-facture__info-label">
+                  Date facture
+                </span>
                 <span className="details-facture__info-value">{formaterDate(devis.date)}</span>
               </div>
             </div>
@@ -413,7 +462,7 @@ export function DetailsDevis({
 
         <div className="details-facture__section">
           <h3 className="details-facture__section-title">
-            Lignes du devis et facturé ({devis.lignes.length})
+            Lignes de la facture ({devis.lignes.length})
           </h3>
           <div className="details-facture__table-container">
             <table className="details-facture__table">
@@ -423,11 +472,11 @@ export function DetailsDevis({
                   <th>Description</th>
                   <th>Traduction FR</th>
                   <th>Logo</th>
-                  <th>Quantité devis</th>
+                  <th>Quantité facturée</th>
                   <th>Quantité reçue (cumulée)</th>
                   <th>Écart qtés</th>
-                  <th>PU devis HT</th>
-                  <th>Montant devis HT</th>
+                  <th>PU HT</th>
+                  <th>Montant HT</th>
                 </tr>
               </thead>
               <tbody>
@@ -529,7 +578,9 @@ export function DetailsDevis({
               </span>
             </div>
             <div className="details-facture__total-item">
-              <span className="details-facture__total-label">Total devis TTC</span>
+              <span className="details-facture__total-label">
+                Total facture TTC
+              </span>
               <span className="details-facture__total-value">
                 {formaterMontant(comparaison.totalDevisTTC)}
               </span>
@@ -558,7 +609,7 @@ export function DetailsDevis({
             </div>
             {acomptesDemandes.length > 0 && (
               <div className="details-facture__total-item">
-                <span className="details-facture__total-label">Acomptes demandés</span>
+                <span className="details-facture__total-label">Factures enfants intégrées (acomptes)</span>
                 <div className="details-facture__total-value">
                   {acomptesDemandes.map((acompte) => (
                     <div key={acompte.id}>
@@ -587,17 +638,19 @@ export function DetailsDevis({
                 {formaterMontant(resteALivrerTTCApresAcompte)}
               </span>
             </div>
-            <div className="details-facture__total-item details-facture__total-item--final">
-              <span className="details-facture__total-label">Écart global TTC</span>
-              <span
-                className="details-facture__total-value details-facture__total-value--final"
-                style={{
-                  color: ecartGlobalSignificatif ? '#b91c1c' : '#059669',
-                }}
-              >
-                {formaterMontant(comparaison.ecartGlobalTTC)}
-              </span>
-            </div>
+            {!estModeFacturePrincipale && (
+              <div className="details-facture__total-item details-facture__total-item--final">
+                <span className="details-facture__total-label">Écart global TTC</span>
+                <span
+                  className="details-facture__total-value details-facture__total-value--final"
+                  style={{
+                    color: ecartGlobalSignificatif ? '#b91c1c' : '#059669',
+                  }}
+                >
+                  {formaterMontant(comparaison.ecartGlobalTTC)}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -662,7 +715,7 @@ export function DetailsDevis({
                     – {devis.lignes[lignePourReception].description}
                   </p>
                   <p style={{ fontSize: '0.8rem', color: '#6b7280' }}>
-                    Quantité devis : {devis.lignes[lignePourReception].quantite} – Quantité déjà reçue :{' '}
+                    Quantité facture : {devis.lignes[lignePourReception].quantite} – Quantité déjà reçue :{' '}
                     {devis.lignes[lignePourReception].quantiteFactureeManuelle || 0} – Quantité restante :{' '}
                     {Math.max(
                       0,
@@ -806,7 +859,7 @@ export function DetailsDevis({
           </div>
         )}
 
-        {/* Modal de liaison / délégation des factures au devis */}
+        {/* Modal de liaison des factures à la facture principale */}
         {liaisonFacturesOuverte && onUpdate && (
           <div
             className="details-facture__modal-overlay"
@@ -817,7 +870,7 @@ export function DetailsDevis({
               onClick={(e) => e.stopPropagation()}
             >
               <div className="details-facture__modal-header">
-                <h2>Lier / délier des factures à ce devis</h2>
+                <h2>Gérer les factures liées à cette facture</h2>
                 <button
                   type="button"
                   onClick={() => setLiaisonFacturesOuverte(false)}
@@ -831,9 +884,9 @@ export function DetailsDevis({
               <div className="details-facture__modal-form">
                 <div className="details-facture__modal-section">
                   <p style={{ fontSize: '0.9rem', color: '#4b5563', marginBottom: '0.75rem' }}>
-                    Sélectionnez les factures de <strong>{devis.fournisseur}</strong> qui
-                    correspondent à ce devis (acomptes, solde…). Vous pouvez cocher ou
-                    décocher pour corriger une erreur de liaison.
+                    Sélectionnez les factures enfants dépendantes de <strong>{devis.fournisseur}</strong>
+                    qui doivent être intégrées à cette facture principale. Vous pouvez cocher ou
+                    décocher pour corriger une erreur de rattachement.
                   </p>
                   {facturesDuMemeFournisseur.length === 0 ? (
                     <div
@@ -851,7 +904,7 @@ export function DetailsDevis({
                       <FileText size={18} />
                       <span>
                         Aucune facture de ce fournisseur n’est encore enregistrée. Importez
-                        d’abord les factures dans l’onglet <strong>Factures</strong>.
+                        d’abord les factures dans l’onglet <strong>Pièces</strong>.
                       </span>
                     </div>
                   ) : (

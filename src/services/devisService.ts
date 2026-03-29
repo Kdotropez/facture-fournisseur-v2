@@ -10,6 +10,7 @@ import type {
   LivraisonDevis,
 } from '../types/devis';
 import type { Facture, Fournisseur, LigneProduit } from '../types/facture';
+import type { Reglement } from '../types/reglement';
 import { ecrireDevisDansIdb, lireDevisDepuisIdb } from '../utils/devisStorage';
 
 const STORAGE_KEY_DEVIS = 'devis-fournisseurs';
@@ -85,6 +86,60 @@ export async function mettreAJourDevis(devis: Devis): Promise<void> {
 export async function obtenirDevis(id: string): Promise<Devis | undefined> {
   const devis = await chargerDevis();
   return devis.find(d => d.id === id);
+}
+
+export function calculerTotalAcompteReferenceTTC(
+  devis: Devis,
+  facturesLiees: Facture[],
+  reglements: Reglement[] = []
+): number {
+  const acomptesDemandes =
+    devis.acomptesDemandes && devis.acomptesDemandes.length > 0
+      ? devis.acomptesDemandes
+      : typeof devis.acompteDemandeTTC === 'number' && devis.acompteDemandeTTC > 0
+        ? [
+            {
+              id: 'acompte-legacy',
+              date: devis.date,
+              montantTTC: devis.acompteDemandeTTC,
+              note: 'Acompte',
+            },
+          ]
+        : [];
+
+  const totalAcomptesDemandes = acomptesDemandes.reduce((sum, acompte) => {
+    const estSolde = (acompte.note || '').toLowerCase().includes('solde');
+    return estSolde ? sum : sum + (acompte.montantTTC || 0);
+  }, 0);
+
+  if (facturesLiees.length === 0) {
+    return totalAcomptesDemandes;
+  }
+
+  const idsFacturesLiees = new Set(facturesLiees.map((facture) => facture.id));
+  const totalAcomptesRegles = reglements
+    .filter(
+      (reglement) =>
+        idsFacturesLiees.has(reglement.factureId) &&
+        reglement.type === 'acompte' &&
+        reglement.statut !== 'annule'
+    )
+    .reduce((sum, reglement) => sum + (reglement.montant || 0), 0);
+
+  if (totalAcomptesRegles > 0) {
+    return totalAcomptesRegles;
+  }
+
+  if (facturesLiees.length === 1) {
+    const [factureLiee] = facturesLiees;
+    const totalFactureLiee = typeof factureLiee.totalTTC === 'number' ? factureLiee.totalTTC : 0;
+    const totalDevisTTC = typeof devis.totalTTC === 'number' ? devis.totalTTC : 0;
+    if (totalFactureLiee > 0 && totalFactureLiee < totalDevisTTC) {
+      return totalFactureLiee;
+    }
+  }
+
+  return totalAcomptesDemandes;
 }
 
 /** Ajoute une livraison à un devis et retourne le devis mis à jour */

@@ -7,6 +7,7 @@ import type {
   ReglePaiementFournisseur, 
   EtatReglementFacture,
   StatistiquesReglements,
+  StatutReglement,
 } from '../types/reglement';
 import type { Facture, Fournisseur } from '../types/facture';
 
@@ -142,6 +143,34 @@ export function supprimerReglement(id: string): boolean {
 
   sauvegarderReglements(nouveauxReglements);
   return true;
+}
+
+/**
+ * Dérègle une facture : repasse tous les règlements payés en attente
+ */
+export function dereglerFacture(facture: Facture): number {
+  const reglements = chargerReglements();
+  const dateFallback = facture.date instanceof Date ? facture.date : new Date(facture.date);
+  const statutEnAttente: StatutReglement = 'en_attente';
+  let modifs = 0;
+
+  const reglementsMaj = reglements.map((r) => {
+    if (r.factureId !== facture.id) return r;
+    if (r.statut !== 'paye' && r.statut !== 'partiel') return r;
+    modifs += 1;
+    return {
+      ...r,
+      statut: statutEnAttente,
+      dateReglement: r.dateEcheance ?? dateFallback,
+      dateModification: new Date(),
+    };
+  });
+
+  if (modifs > 0) {
+    sauvegarderReglements(reglementsMaj);
+  }
+
+  return modifs;
 }
 
 /**
@@ -601,7 +630,6 @@ export function calculerStatistiquesReglements(
   reglementsOverride?: Reglement[]
 ): StatistiquesReglements {
   const reglements = reglementsOverride ?? chargerReglements();
-  const reglementsPayes = reglements.filter(r => r.statut === 'paye');
   
   const etats = factures.map(f => calculerEtatReglement(f, reglements));
   
@@ -611,9 +639,10 @@ export function calculerStatistiquesReglements(
   const facturesNonReglees = etats.filter(e => e.statut === 'non_regle').length;
   
   // Calculer les totaux
-  const totalARegler = factures.reduce((sum, f) => {
-    const totalTTC = typeof f.totalTTC === 'number' && !isNaN(f.totalTTC) ? f.totalTTC : 0;
-    return sum + totalTTC;
+  const totalARegler = etats.reduce((sum, etat) => {
+    const montantRestant =
+      typeof etat.montantRestant === 'number' && !isNaN(etat.montantRestant) ? etat.montantRestant : 0;
+    return sum + montantRestant;
   }, 0);
   
   // Total réglé : utiliser les montants valides (sans doublons)
@@ -648,10 +677,11 @@ export function calculerStatistiquesReglements(
     }
     
     const etat = calculerEtatReglement(facture);
-    const totalTTC = typeof facture.totalTTC === 'number' && !isNaN(facture.totalTTC) ? facture.totalTTC : 0;
+    const montantRestant =
+      typeof etat.montantRestant === 'number' && !isNaN(etat.montantRestant) ? etat.montantRestant : 0;
     
     parFournisseur[facture.fournisseur].nombreFactures++;
-    parFournisseur[facture.fournisseur].totalARegler += totalTTC;
+    parFournisseur[facture.fournisseur].totalARegler += montantRestant;
     parFournisseur[facture.fournisseur].totalRegle += etat.montantRegle;
     
     if (etat.statut === 'regle') {

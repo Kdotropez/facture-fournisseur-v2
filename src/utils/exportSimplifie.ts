@@ -41,8 +41,19 @@ export const telechargerCSVSimple = (nomFichier: string, lignes: ExportLigneSimp
       ].join(';')
     ),
   ];
-  const contenu = '\ufeff' + lignesCSV.join('\n');
-  const blob = new Blob([contenu], { type: 'text/csv;charset=utf-8;' });
+  const contenu = lignesCSV.join('\r\n');
+
+  // Excel Windows lit beaucoup plus fiablement le CSV en UTF-16LE avec BOM.
+  const bytes = new Uint8Array(2 + contenu.length * 2);
+  bytes[0] = 0xff;
+  bytes[1] = 0xfe;
+  for (let i = 0; i < contenu.length; i += 1) {
+    const code = contenu.charCodeAt(i);
+    bytes[2 + i * 2] = code & 0xff;
+    bytes[3 + i * 2] = code >> 8;
+  }
+
+  const blob = new Blob([bytes], { type: 'text/csv;charset=utf-16le;' });
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   a.href = url;

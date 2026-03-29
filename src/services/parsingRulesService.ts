@@ -316,6 +316,10 @@ export function memoriserModeleParsing(
   texteBrut: string
 ): void {
   console.log(`[PARSING RULES] Mémorisation du modèle de parsing pour ${fournisseur}...`);
+  const dateFacture =
+    factureCorrigee.date instanceof Date
+      ? factureCorrigee.date
+      : new Date(factureCorrigee.date);
   
   const regles = chargerReglesParsing();
   const regleExistante = regles.get(fournisseur);
@@ -354,7 +358,9 @@ export function memoriserModeleParsing(
   // Créer un modèle de parsing basé sur la facture corrigée
   const modeleParsing = {
     numeroFacture: factureCorrigee.numero,
-    dateFacture: factureCorrigee.date.toISOString(),
+    dateFacture: Number.isNaN(dateFacture.getTime())
+      ? new Date().toISOString()
+      : dateFacture.toISOString(),
     nombreLignes: factureCorrigee.lignes.length,
     structureLignes: factureCorrigee.lignes.map(ligne => ({
       refFournisseur: ligne.refFournisseur,
@@ -370,7 +376,10 @@ export function memoriserModeleParsing(
     totalHT: factureCorrigee.totalHT,
     totalTVA: factureCorrigee.totalTVA,
     totalTTC: factureCorrigee.totalTTC,
-    factureComplete: factureCorrigee, // Sauvegarder la facture complète pour réutilisation
+    factureComplete: {
+      ...factureCorrigee,
+      date: Number.isNaN(dateFacture.getTime()) ? new Date() : dateFacture,
+    }, // Sauvegarder la facture complète pour réutilisation
     texteBrut: texteBrut.substring(0, 10000), // Limiter à 10k caractères pour le stockage
   };
   
@@ -1006,7 +1015,8 @@ export function appliquerReglesApprises(
     });
     
     // Ne réutiliser le modèle complet QUE si c'est exactement la même facture
-    if (estMemeFacture) {
+    // et que le modèle n'est pas moins complet que le parsing actuel
+    if (estMemeFacture && modele.lignes.length >= facture.lignes.length) {
       console.log(`[PARSING RULES] ✅ Même facture détectée (${numeroModeleNormalise}), réutilisation complète du modèle`);
       const factureCorrigee: Facture = {
         ...modele,
@@ -1119,6 +1129,34 @@ export function appliquerReglesApprises(
   profil.nombreUtilisations = (profil.nombreUtilisations || 0) + 1;
   
   return factureCorrigee;
+}
+
+/**
+ * Récupère une facture mémorisée (modèle complet) pour un fournisseur/numéro.
+ * Utile pour restaurer une facture corrigée même si l'import a été bloqué.
+ */
+export function obtenirFactureMemorisee(
+  fournisseur: Fournisseur,
+  numeroFacture: string
+): Facture | null {
+  const regle = obtenirRegleParsing(fournisseur);
+  if (!regle?.profils || regle.profils.length === 0) return null;
+
+  const numeroNormalise = normaliserNumero(numeroFacture);
+  if (!numeroNormalise) return null;
+
+  const profils = regle.profils
+    .filter(p => p.modeleParsing?.factureComplete && p.modeleParsing?.numeroFacture)
+    .filter(p => normaliserNumero(p.modeleParsing!.numeroFacture) === numeroNormalise)
+    .sort((a, b) => {
+      const dateA = a.dateDerniereUtilisation?.getTime() || 0;
+      const dateB = b.dateDerniereUtilisation?.getTime() || 0;
+      return dateB - dateA;
+    });
+
+  if (profils.length === 0) return null;
+
+  return profils[0].modeleParsing!.factureComplete || null;
 }
 
 /**

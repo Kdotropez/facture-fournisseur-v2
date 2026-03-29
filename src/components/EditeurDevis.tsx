@@ -2,8 +2,8 @@
  * Modal de création / édition d'un devis à la main
  */
 
-import { useEffect, useState } from 'react';
-import { X, Plus, Trash2 } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import { X, Plus, Trash2, Upload } from 'lucide-react';
 import type { Devis, AcompteDevis } from '../types/devis';
 import type { LigneProduit, Fournisseur } from '../types/facture';
 import { obtenirFournisseurs } from '@parsers/index';
@@ -17,6 +17,8 @@ interface EditeurDevisProps {
 
 export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurDevisProps) {
   const tousLesFournisseurs = obtenirFournisseurs();
+  const importCsvInputRef = useRef<HTMLInputElement>(null);
+  const devisChargeIdRef = useRef<string | null>(devisInitial?.id ?? null);
 
   const creerDevisInitial = (): Devis => ({
     id: `devis-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
@@ -76,17 +78,28 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
   const [totalTTCInput, setTotalTTCInput] = useState(() =>
     typeof (devisInitial?.totalTTC) === 'number' ? String(devisInitial.totalTTC) : '0'
   );
+  const [messageImportCsv, setMessageImportCsv] = useState<string>('');
   // Si on reçoit un devis existant à éditer, on le charge dans l'état local
   useEffect(() => {
-    if (devisInitial) {
-      setDevis({ ...devisInitial, acomptesDemandes: normaliserAcomptes(devisInitial) });
-      setTotalTVAInput(
-        typeof devisInitial.totalTVA === 'number' ? String(devisInitial.totalTVA) : '0'
-      );
-      setTotalTTCInput(
-        typeof devisInitial.totalTTC === 'number' ? String(devisInitial.totalTTC) : '0'
-      );
+    if (!devisInitial) {
+      if (devisChargeIdRef.current !== null) {
+        devisChargeIdRef.current = null;
+        const nouveauDevis = creerDevisInitial();
+        setDevis(nouveauDevis);
+        setTotalTVAInput('0');
+        setTotalTTCInput('0');
+      }
+      return;
     }
+
+    if (devisChargeIdRef.current === devisInitial.id) {
+      return;
+    }
+
+    devisChargeIdRef.current = devisInitial.id;
+    setDevis({ ...devisInitial, acomptesDemandes: normaliserAcomptes(devisInitial) });
+    setTotalTVAInput(typeof devisInitial.totalTVA === 'number' ? String(devisInitial.totalTVA) : '0');
+    setTotalTTCInput(typeof devisInitial.totalTTC === 'number' ? String(devisInitial.totalTTC) : '0');
   }, [devisInitial]);
 
   const handleChange = (field: keyof Devis, value: unknown) => {
@@ -94,16 +107,42 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
   };
 
   useEffect(() => {
-    const totalHT = devis.lignes.reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0);
-    const totalTVA = typeof devis.totalTVA === 'number' ? devis.totalTVA : 0;
-    const totalTTC = totalHT + totalTVA;
+    const totaux = calculerTotauxDevisDepuisLignes(devis, devis.lignes);
+    const donneesBrutes = devis.donneesBrutes || {};
+    const totalHTFOBActuel =
+      typeof donneesBrutes.totalHTFOB === 'number' ? donneesBrutes.totalHTFOB : undefined;
+    const transportActuel =
+      typeof donneesBrutes.transportEtDouanes === 'number'
+        ? donneesBrutes.transportEtDouanes
+        : undefined;
+    const totalHTGlobalActuel =
+      typeof donneesBrutes.totalHTGlobal === 'number' ? donneesBrutes.totalHTGlobal : undefined;
 
-    if (totalHT !== devis.totalHT || totalTTC !== devis.totalTTC) {
-      setDevis(prev => ({ ...prev, totalHT, totalTTC }));
+    if (
+      totaux.totalHT !== devis.totalHT ||
+      totaux.totalTVA !== devis.totalTVA ||
+      totaux.totalTTC !== devis.totalTTC ||
+      totalHTFOBActuel !== totaux.totalHTFOB ||
+      transportActuel !== totaux.transportEtDouanes ||
+      totalHTGlobalActuel !== totaux.totalHT
+    ) {
+      setDevis(prev => ({
+        ...prev,
+        totalHT: totaux.totalHT,
+        totalTVA: totaux.totalTVA,
+        totalTTC: totaux.totalTTC,
+        donneesBrutes: {
+          ...(prev.donneesBrutes || {}),
+          totalHTFOB: totaux.totalHTFOB,
+          transportEtDouanes: totaux.transportEtDouanes,
+          totalHTGlobal: totaux.totalHT,
+        },
+      }));
     }
 
-    setTotalTTCInput(String(totalTTC));
-  }, [devis.lignes, devis.totalTVA, devis.totalHT, devis.totalTTC]);
+    setTotalTVAInput(String(totaux.totalTVA));
+    setTotalTTCInput(String(totaux.totalTTC));
+  }, [devis.lignes, devis.totalTVA, devis.totalHT, devis.totalTTC, devis.donneesBrutes]);
 
   const handleChangeLigne = (index: number, field: keyof LigneProduit, value: unknown) => {
     setDevis(prev => {
@@ -158,10 +197,308 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
     return Number.isFinite(parsed) ? parsed : null;
   };
 
+  const arrondir2 = (valeur: number) =>
+    Math.round((valeur + Number.EPSILON) * 100) / 100;
+
+  const calculerTotauxDevisDepuisLignes = (devisSource: Devis, lignes: LigneProduit[]) => {
+    const totalHTFOB = arrondir2(
+      lignes.reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0)
+    );
+    const totalHTFOBActuelDevis = arrondir2(
+      (devisSource.lignes || []).reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0)
+    );
+
+    const donneesBrutes = devisSource.donneesBrutes || {};
+    const totalHTFOBReference =
+      typeof donneesBrutes.totalHTFOB === 'number' && donneesBrutes.totalHTFOB > 0
+        ? donneesBrutes.totalHTFOB
+        : totalHTFOBActuelDevis || totalHTFOB;
+    const transportReference =
+      typeof donneesBrutes.transportEtDouanes === 'number'
+        ? donneesBrutes.transportEtDouanes
+        : Math.max(0, arrondir2((devisSource.totalHT || 0) - totalHTFOBReference));
+    const totalHTGlobalReference =
+      typeof donneesBrutes.totalHTGlobal === 'number' && donneesBrutes.totalHTGlobal > 0
+        ? donneesBrutes.totalHTGlobal
+        : (typeof devisSource.totalHT === 'number' ? devisSource.totalHT : totalHTFOB);
+    const totalTVAReference = typeof devisSource.totalTVA === 'number' ? devisSource.totalTVA : 0;
+
+    const coefTransport =
+      totalHTFOBReference > 0 ? transportReference / totalHTFOBReference : 0;
+    const transportEtDouanes = arrondir2(totalHTFOB * coefTransport);
+    const totalHT = arrondir2(totalHTFOB + transportEtDouanes);
+
+    const coefTVA =
+      totalHTGlobalReference > 0 ? totalTVAReference / totalHTGlobalReference : 0;
+    const totalTVA = arrondir2(totalHT * coefTVA);
+    const totalTTC = arrondir2(totalHT + totalTVA);
+
+    return {
+      totalHTFOB,
+      transportEtDouanes,
+      totalHT,
+      totalTVA,
+      totalTTC,
+    };
+  };
+
+  const parserLigneCSV = (ligne: string, separateur: string): string[] => {
+    const cellules: string[] = [];
+    let valeurCourante = '';
+    let dansGuillemets = false;
+
+    for (let i = 0; i < ligne.length; i += 1) {
+      const caractere = ligne[i];
+      const suivant = ligne[i + 1];
+
+      if (caractere === '"') {
+        if (dansGuillemets && suivant === '"') {
+          valeurCourante += '"';
+          i += 1;
+        } else {
+          dansGuillemets = !dansGuillemets;
+        }
+        continue;
+      }
+
+      if (caractere === separateur && !dansGuillemets) {
+        cellules.push(valeurCourante.trim());
+        valeurCourante = '';
+        continue;
+      }
+
+      valeurCourante += caractere;
+    }
+
+    cellules.push(valeurCourante.trim());
+    return cellules;
+  };
+
+  const reparerTexteImporte = (valeur?: string) => {
+    const texte = (valeur || '').replace(/\u0000/g, '').trim();
+    if (!texte) return '';
+
+    return texte
+      .replace(/Ã‰/g, 'É')
+      .replace(/Ãˆ/g, 'È')
+      .replace(/ÃŠ/g, 'Ê')
+      .replace(/Ã‹/g, 'Ë')
+      .replace(/Ã€/g, 'À')
+      .replace(/Ã‚/g, 'Â')
+      .replace(/Ã„/g, 'Ä')
+      .replace(/Ã‡/g, 'Ç')
+      .replace(/ÃŽ/g, 'Î')
+      .replace(/ÃÏ/g, 'Ï')
+      .replace(/Ã”/g, 'Ô')
+      .replace(/Ã–/g, 'Ö')
+      .replace(/Ã™/g, 'Ù')
+      .replace(/Ã›/g, 'Û')
+      .replace(/Ãœ/g, 'Ü')
+      .replace(/Ã©/g, 'é')
+      .replace(/Ã¨/g, 'è')
+      .replace(/Ãª/g, 'ê')
+      .replace(/Ã«/g, 'ë')
+      .replace(/Ã /g, 'à')
+      .replace(/Ã¢/g, 'â')
+      .replace(/Ã¤/g, 'ä')
+      .replace(/Ã§/g, 'ç')
+      .replace(/Ã®/g, 'î')
+      .replace(/Ã¯/g, 'ï')
+      .replace(/Ã´/g, 'ô')
+      .replace(/Ã¶/g, 'ö')
+      .replace(/Ã¹/g, 'ù')
+      .replace(/Ã»/g, 'û')
+      .replace(/Ã¼/g, 'ü')
+      .replace(/Å“/g, 'œ')
+      .replace(/Å’/g, 'Œ')
+      .replace(/â€™/g, "'")
+      .replace(/â€œ/g, '"')
+      .replace(/â€/g, '"')
+      .replace(/â€“/g, '-')
+      .replace(/â€”/g, '-')
+      .replace(/Â/g, '');
+  };
+
+  const decoderContenuCSV = (buffer: ArrayBuffer) => {
+    const octets = new Uint8Array(buffer);
+
+    if (octets.length >= 2) {
+      if (octets[0] === 0xff && octets[1] === 0xfe) {
+        return new TextDecoder('utf-16le').decode(buffer);
+      }
+      if (octets[0] === 0xfe && octets[1] === 0xff) {
+        const inverse = new Uint8Array(octets.length);
+        for (let i = 0; i < octets.length - 1; i += 2) {
+          inverse[i] = octets[i + 1];
+          inverse[i + 1] = octets[i];
+        }
+        if (octets.length % 2 === 1) {
+          inverse[octets.length - 1] = octets[octets.length - 1];
+        }
+        return new TextDecoder('utf-16le').decode(inverse);
+      }
+    }
+
+    let contenu = new TextDecoder('utf-8').decode(buffer);
+    if (/\u0000/.test(contenu)) {
+      contenu = new TextDecoder('utf-16le').decode(buffer);
+    } else if (/[Ãâ€]/.test(contenu)) {
+      contenu = new TextDecoder('windows-1252').decode(buffer);
+    }
+
+    return contenu.replace(/\u0000/g, '');
+  };
+
+  const importerLignesDepuisCSV = (contenu: string) => {
+    const lignesBrutes = contenu
+      .replace(/^\uFEFF/, '')
+      .split(/\r?\n/)
+      .map((ligne) => ligne.trim())
+      .filter(Boolean);
+
+    const lignesSansDirective = lignesBrutes.filter((ligne) => !/^sep=./i.test(ligne));
+    if (lignesSansDirective.length < 2) {
+      setMessageImportCsv('Fichier CSV vide ou incomplet.');
+      return;
+    }
+
+    const ligneEntete = lignesSansDirective[0];
+    const separateur = ligneEntete.includes(';')
+      ? ';'
+      : ligneEntete.includes('\t')
+      ? '\t'
+      : ',';
+    const normaliserEntete = (cellule: string) =>
+      reparerTexteImporte(cellule)
+        .toLowerCase()
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .replace(/[()]/g, ' ')
+        .replace(/€/g, ' euro ')
+        .replace(/[.:_-]+/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+    const entetes = parserLigneCSV(ligneEntete, separateur).map(normaliserEntete);
+
+    const trouverIndex = (aliases: string[]) =>
+      entetes.findIndex((cellule) =>
+        aliases.some(
+          (alias) =>
+            cellule === alias ||
+            cellule.startsWith(alias) ||
+            cellule.includes(alias)
+        )
+      );
+
+    const indexRef = trouverIndex(['ref', 'reference', 'reference fournisseur']);
+    const indexNom = trouverIndex(['nom', 'designation', 'description']);
+    const indexNomFR = trouverIndex(['nom fr']);
+    const indexLogo = trouverIndex(['logo']);
+    const indexQuantiteDevis = trouverIndex(['qte devis']);
+    const indexQuantiteFacture = trouverIndex(['qte facture']);
+    const indexPrix = trouverIndex(['pu ht', 'pu ht euro']);
+
+    if (indexNom === -1 || indexPrix === -1) {
+      setMessageImportCsv(
+        `Colonnes CSV non reconnues. Entête lue: ${entetes.join(' | ')}`
+      );
+      return;
+    }
+
+    const rejets: string[] = [];
+    const nouvellesLignes: LigneProduit[] = lignesSansDirective
+      .slice(1)
+      .map((ligne) => parserLigneCSV(ligne, separateur))
+      .map((cellules, index) => {
+        const ligneExistante = devis.lignes[index];
+        const quantiteBrute =
+          (indexQuantiteDevis >= 0 ? cellules[indexQuantiteDevis] : '') ||
+          (indexQuantiteFacture >= 0 ? cellules[indexQuantiteFacture] : '') ||
+          String(ligneExistante?.quantite ?? 0);
+        const quantite = normaliserMontant(quantiteBrute) ?? ligneExistante?.quantite ?? 0;
+        const prixUnitaireHT = normaliserMontant(cellules[indexPrix] || '0') ?? 0;
+        const description = reparerTexteImporte(cellules[indexNom] || '');
+
+        if (!description) {
+          rejets.push(`ligne ${index + 2}: description vide`);
+          return null;
+        }
+
+        const remise = ligneExistante?.remise || 0;
+        const montantHT = arrondir2(Math.max(0, quantite * prixUnitaireHT - remise));
+
+        return {
+          ...ligneExistante,
+          refFournisseur:
+            indexRef >= 0 && reparerTexteImporte(cellules[indexRef] || '')
+              ? reparerTexteImporte(cellules[indexRef] || '')
+              : ligneExistante?.refFournisseur,
+          description,
+          descriptionFR:
+            indexNomFR >= 0 && reparerTexteImporte(cellules[indexNomFR] || '')
+              ? reparerTexteImporte(cellules[indexNomFR] || '')
+              : ligneExistante?.descriptionFR,
+          logo:
+            indexLogo >= 0 && reparerTexteImporte(cellules[indexLogo] || '')
+              ? reparerTexteImporte(cellules[indexLogo] || '')
+              : ligneExistante?.logo,
+          quantite,
+          prixUnitaireHT,
+          remise,
+          montantHT,
+        } satisfies LigneProduit;
+      })
+      .filter((ligne): ligne is LigneProduit => !!ligne);
+
+    if (nouvellesLignes.length === 0) {
+      setMessageImportCsv('Aucune ligne exploitable trouvée dans le CSV.');
+      return;
+    }
+
+    const totauxImportes = calculerTotauxDevisDepuisLignes(devis, nouvellesLignes);
+
+    setDevis((prev) => ({
+      ...prev,
+      lignes: nouvellesLignes,
+      totalHT: totauxImportes.totalHT,
+      totalTVA: totauxImportes.totalTVA,
+      totalTTC: totauxImportes.totalTTC,
+      donneesBrutes: {
+        ...(prev.donneesBrutes || {}),
+        totalHTFOB: totauxImportes.totalHTFOB,
+        transportEtDouanes: totauxImportes.transportEtDouanes,
+        totalHTGlobal: totauxImportes.totalHT,
+      },
+    }));
+    setTotalTVAInput(String(totauxImportes.totalTVA));
+    setTotalTTCInput(String(totauxImportes.totalTTC));
+    const resumeImport = `${lignesSansDirective.length - 1} ligne(s) lue(s), ${nouvellesLignes.length} importée(s) depuis le CSV.`;
+    setMessageImportCsv(
+      rejets.length > 0 ? `${resumeImport} Rejets: ${rejets.slice(0, 5).join(' | ')}` : resumeImport
+    );
+  };
+
+  const handleImporterFichierCSV = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const fichier = event.target.files?.[0];
+    if (!fichier) return;
+
+    try {
+      const buffer = await fichier.arrayBuffer();
+      const contenu = decoderContenuCSV(buffer);
+      importerLignesDepuisCSV(contenu);
+    } catch {
+      setMessageImportCsv('Impossible de lire le fichier CSV.');
+    } finally {
+      event.target.value = '';
+    }
+  };
+
   const totalAcomptesTTC = (devis.acomptesDemandes || []).reduce(
     (sum, acompte) => sum + (acompte.montantTTC || 0),
     0
   );
+  const totauxAffiches = calculerTotauxDevisDepuisLignes(devis, devis.lignes);
 
   const handleAjouterAcompte = () => {
     setDevis((prev) => ({
@@ -202,17 +539,25 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
     const totalTVAFinal = totalTVAParse ?? 0;
     const totalTTCFinal = totalTTCParse ?? 0;
     const acompteDemandeFinal = totalAcomptesTTC;
-
-    // Recalculer les totaux à partir des lignes
-    const totalHT = devis.lignes.reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0);
-    const totalTVA = totalTVAFinal; // tu pourras ajuster la TVA manuellement si besoin
-    const totalTTC = totalTTCFinal || (totalHT + totalTVA);
+    const totalHTFOB = arrondir2(
+      devis.lignes.reduce((sum, ligne) => sum + (ligne.montantHT || 0), 0)
+    );
+    const transportEtDouanes = arrondir2(Math.max(0, (devis.totalHT || 0) - totalHTFOB));
+    const totalHT = arrondir2(totalHTFOB + transportEtDouanes);
+    const totalTVA = totalTVAFinal;
+    const totalTTC = totalTTCFinal || arrondir2(totalHT + totalTVA);
 
     const devisFinal: Devis = {
       ...devis,
       totalHT,
       totalTVA,
       totalTTC,
+      donneesBrutes: {
+        ...(devis.donneesBrutes || {}),
+        totalHTFOB,
+        transportEtDouanes,
+        totalHTGlobal: totalHT,
+      },
       acompteDemandeTTC: acompteDemandeFinal,
       acomptesDemandes: devis.acomptesDemandes || [],
       // Si le devis a déjà une date d'import (cas édition), on la conserve
@@ -299,15 +644,40 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
               }}
             >
               <h3>Lignes du devis</h3>
-              <button
-                type="button"
-                onClick={handleAjouterLigne}
-                className="details-facture__btn-add"
-              >
-                <Plus size={16} />
-                Ajouter une ligne
-              </button>
+              <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
+                <button
+                  type="button"
+                  onClick={() => importCsvInputRef.current?.click()}
+                  className="details-facture__btn-add"
+                >
+                  <Upload size={16} />
+                  Importer Excel (CSV)
+                </button>
+                <button
+                  type="button"
+                  onClick={handleAjouterLigne}
+                  className="details-facture__btn-add"
+                >
+                  <Plus size={16} />
+                  Ajouter une ligne
+                </button>
+              </div>
             </div>
+            <input
+              ref={importCsvInputRef}
+              type="file"
+              accept=".csv,text/csv"
+              onChange={handleImporterFichierCSV}
+              style={{ display: 'none' }}
+            />
+            <p style={{ fontSize: '0.9rem', color: '#6b7280', marginBottom: '1rem' }}>
+              Compatible avec l’export devis Excel (CSV) du programme. Les lignes importées remplacent les lignes actuelles.
+            </p>
+            {messageImportCsv && (
+              <p style={{ fontSize: '0.9rem', color: '#2563eb', marginBottom: '1rem' }}>
+                {messageImportCsv}
+              </p>
+            )}
             <div className="details-facture__modal-lignes">
               {devis.lignes.map((ligne, index) => (
                 <div key={index} className="details-facture__modal-ligne">
@@ -436,6 +806,26 @@ export function EditeurDevis({ devisInitial, onSauvegarder, onFermer }: EditeurD
           <div className="details-facture__modal-section">
             <h3>Totaux (facultatif)</h3>
             <div className="details-facture__modal-grid">
+              <div className="details-facture__modal-field">
+                <label>Transport et douanes</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={String(totauxAffiches.transportEtDouanes)}
+                  readOnly
+                  style={{ backgroundColor: '#f3f4f6' }}
+                />
+              </div>
+              <div className="details-facture__modal-field">
+                <label>Total HT</label>
+                <input
+                  type="text"
+                  inputMode="decimal"
+                  value={String(totauxAffiches.totalHT)}
+                  readOnly
+                  style={{ backgroundColor: '#f3f4f6' }}
+                />
+              </div>
               <div className="details-facture__modal-field">
                 <label>Total TVA</label>
                 <input

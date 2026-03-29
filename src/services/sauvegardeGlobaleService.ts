@@ -18,6 +18,8 @@ export interface SauvegardeGlobale {
 const STORAGE_KEYS_IMPORTANTES: string[] = [
   'factures-fournisseurs',        // Factures
   'devis-fournisseurs',          // Devis
+  'documents-fournisseurs',      // Documents unifiés (migration progressive)
+  'documents-fournisseurs-migration-backup-v1', // Backup avant migration vers documents
   'reglements-factures',         // Règlements
   'regles-paiement-fournisseurs',// Règles de paiement
   'parsing-rules',               // Règles de parsing apprises

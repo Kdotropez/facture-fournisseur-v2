@@ -33,6 +33,181 @@ export function chargerFactures(): Facture[] {
   }
 }
 
+function normaliserFactureStockage(f: Facture): Facture {
+  return {
+    ...f,
+    statut: f.statut ?? 'active',
+    fournisseur: normaliserNomFournisseur(f.fournisseur),
+    date: new Date(f.date),
+    dateLivraison: f.dateLivraison ? new Date(f.dateLivraison) : undefined,
+    dateImport: new Date(f.dateImport),
+  };
+}
+
+function trouverFactureDansListe(
+  factures: Facture[],
+  cible: Facture
+): Facture | null {
+  const fournisseurCible = normaliserNomFournisseur(cible.fournisseur);
+  const matchId = factures.find(f => f.id === cible.id);
+  if (matchId) return matchId;
+  const matchNumero = factures.find(
+    f => normaliserNomFournisseur(f.fournisseur) === fournisseurCible && f.numero === cible.numero
+  );
+  return matchNumero || null;
+}
+
+/**
+ * Recherche une facture dans les sauvegardes locales (auto-backup + backups locaux).
+ * Utile pour restaurer une version correcte après un parsing erroné.
+ */
+export interface FactureSauvegardeeCandidate {
+  facture: Facture;
+  source: string;
+  dateSauvegarde?: Date;
+}
+
+function normaliserCleFacture(f: Facture): string {
+  return [
+    normaliserNomFournisseur(f.fournisseur),
+    f.numero,
+    f.totalHT?.toFixed(2),
+    f.totalTTC?.toFixed(2),
+    f.lignes?.length ?? 0,
+  ].join('|');
+}
+
+export function listerFacturesSauvegardes(cible: Facture): FactureSauvegardeeCandidate[] {
+  const candidats: FactureSauvegardeeCandidate[] = [];
+  const clesVues = new Set<string>();
+  const fournisseurCible = normaliserNomFournisseur(cible.fournisseur);
+  const fichierCible = (cible.fichierPDF || '').split(/[/\\]/).pop() || '';
+
+  const ajouterCandidat = (facture: Facture, source: string, dateSauvegarde?: Date) => {
+    const cle = normaliserCleFacture(facture);
+    if (clesVues.has(cle)) return;
+    clesVues.add(cle);
+    candidats.push({ facture, source, dateSauvegarde });
+  };
+
+  const ajouterCandidatsDepuisListe = (
+    factures: Facture[],
+    source: string,
+    dateSauvegarde?: Date
+  ) => {
+    const normalisees = factures.map(normaliserFactureStockage);
+    const matchDirect = trouverFactureDansListe(normalisees, cible);
+    if (matchDirect) {
+      ajouterCandidat(matchDirect, source, dateSauvegarde);
+    }
+
+    if (fichierCible) {
+      normalisees
+        .filter((f) => {
+          if (normaliserNomFournisseur(f.fournisseur) !== fournisseurCible) return false;
+          const fichier = (f.fichierPDF || '').split(/[/\\]/).pop() || '';
+          return fichier && fichier === fichierCible;
+        })
+        .forEach((f) => ajouterCandidat(f, source, dateSauvegarde));
+    }
+  };
+
+  try {
+    // 1) Sauvegarde auto la plus récente
+    const sauvegardeAuto = localStorage.getItem('auto-backup-dernier-contenu');
+    if (sauvegardeAuto) {
+      const parsed = JSON.parse(sauvegardeAuto);
+      const donnees = parsed?.donnees || {};
+      const dateExport = parsed?.dateExport ? new Date(parsed.dateExport) : undefined;
+      const facturesAuto: Facture[] =
+        donnees['factures-fournisseurs-complet'] ||
+        donnees['factures-fournisseurs'] ||
+        [];
+      if (Array.isArray(facturesAuto) && facturesAuto.length > 0) {
+        ajouterCandidatsDepuisListe(facturesAuto, 'Sauvegarde auto', dateExport);
+      }
+    }
+
+    // 2) Backups locaux factures-fournisseurs-backup-*
+    const backups: Array<{ cle: string; timestamp: number }> = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const cle = localStorage.key(i);
+      if (cle && cle.startsWith(`${STORAGE_KEY}-backup-`)) {
+        const match = cle.match(/backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)/);
+        const timestamp = match ? new Date(match[1].replace(/-/g, ':')
+          .replace('T', 'T')
+          .replace(/(\d{2})-(\d{2})-(\d{2})/, '$1:$2:$3')).getTime() : 0;
+        backups.push({ cle, timestamp });
+      }
+    }
+    backups.sort((a, b) => b.timestamp - a.timestamp);
+
+    for (const backup of backups) {
+      const data = localStorage.getItem(backup.cle);
+      if (!data) continue;
+      const factures = JSON.parse(data) as Facture[];
+      if (!Array.isArray(factures)) continue;
+      ajouterCandidatsDepuisListe(
+        factures,
+        'Backup local',
+        backup.timestamp ? new Date(backup.timestamp) : undefined
+      );
+    }
+  } catch (error) {
+    console.warn('[FACTURES] Erreur lors du listing des sauvegardes:', error);
+  }
+
+  return candidats;
+}
+
+export function rechercherFactureDansSauvegardes(cible: Facture): Facture | null {
+  try {
+    // 1) Sauvegarde auto la plus récente stockée en localStorage
+    const sauvegardeAuto = localStorage.getItem('auto-backup-dernier-contenu');
+    if (sauvegardeAuto) {
+      const parsed = JSON.parse(sauvegardeAuto);
+      const donnees = parsed?.donnees || {};
+      const facturesAuto: Facture[] =
+        donnees['factures-fournisseurs-complet'] ||
+        donnees['factures-fournisseurs'] ||
+        [];
+      if (Array.isArray(facturesAuto) && facturesAuto.length > 0) {
+        const normalisees = facturesAuto.map(normaliserFactureStockage);
+        const match = trouverFactureDansListe(normalisees, cible);
+        if (match) return match;
+      }
+    }
+
+    // 2) Backups locaux factures-fournisseurs-backup-*
+    const backups: Array<{ cle: string; timestamp: number }> = [];
+    for (let i = 0; i < localStorage.length; i++) {
+      const cle = localStorage.key(i);
+      if (cle && cle.startsWith(`${STORAGE_KEY}-backup-`)) {
+        const match = cle.match(/backup-(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z)/);
+        const timestamp = match ? new Date(match[1].replace(/-/g, ':')
+          .replace('T', 'T')
+          .replace(/(\d{2})-(\d{2})-(\d{2})/, '$1:$2:$3')).getTime() : 0;
+        backups.push({ cle, timestamp });
+      }
+    }
+    backups.sort((a, b) => b.timestamp - a.timestamp);
+
+    for (const backup of backups) {
+      const data = localStorage.getItem(backup.cle);
+      if (!data) continue;
+      const factures = JSON.parse(data) as Facture[];
+      if (!Array.isArray(factures)) continue;
+      const normalisees = factures.map(normaliserFactureStockage);
+      const match = trouverFactureDansListe(normalisees, cible);
+      if (match) return match;
+    }
+  } catch (error) {
+    console.warn('[FACTURES] Erreur lors de la recherche dans les sauvegardes:', error);
+  }
+
+  return null;
+}
+
 /**
  * Nettoie les anciens backups pour libérer de l'espace
  */
@@ -225,6 +400,22 @@ export function mettreAJourFacture(facture: Facture): void {
 export function obtenirFacture(id: string): Facture | undefined {
   const factures = chargerFactures();
   return factures.find(f => f.id === id);
+}
+
+/**
+ * Obtient une facture par fournisseur + numéro
+ */
+export function obtenirFactureParNumeroFournisseur(
+  fournisseur: Fournisseur,
+  numero: string
+): Facture | undefined {
+  const factures = chargerFactures();
+  const fournisseurNormalise = normaliserNomFournisseur(fournisseur);
+  return factures.find(
+    (f) =>
+      normaliserNomFournisseur(f.fournisseur) === fournisseurNormalise &&
+      f.numero === numero
+  );
 }
 
 /**

@@ -197,38 +197,211 @@ export const parserLehmann: Parser = {
       ];
       const totalTTC = extracteurs.extraireMontant(textePourTotaux, totalTTCPatterns) || 
                        (totalHT + totalTVA);
+      const totalHTFinal =
+        totalHT === 0 && totalTTC > 0 && totalTVA > 0
+          ? Math.max(0, totalTTC - totalTVA)
+          : totalHT;
 
-      console.log('[LEHMANN] Totaux extraits - HT:', totalHT, 'TVA:', totalTVA, 'TTC:', totalTTC);
+      console.log('[LEHMANN] Totaux extraits - HT:', totalHTFinal, 'TVA:', totalTVA, 'TTC:', totalTTC);
 
       // Extraction des lignes de produits
       // Pour les factures multi-pages, extraire les lignes de toutes les pages
       // (sauf les totaux partiels en bas de chaque page intermédiaire)
-      const lignes: LigneProduit[] = [];
+      let lignes: LigneProduit[] = [];
       
-      // Extraire les lignes de chaque page (sauf la dernière qui contient les totaux finaux)
-      for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
-        const pageTexte = pages[pageIndex];
-        const estDernierePage = pageIndex === pages.length - 1;
-        
-        // Pour chaque page, identifier la section des lignes de produits
-        // (en excluant les totaux partiels en bas de page)
-        const sectionLignes = extraireSectionLignesMultiPages(pageTexte, estDernierePage);
-        
-        if (sectionLignes) {
-          console.log(`[LEHMANN] Section lignes extraite de la page ${pageIndex + 1} (${sectionLignes.length} caractères)`);
-          console.log(`[LEHMANN] Aperçu:`, sectionLignes.substring(0, 300));
+      const parserLignesConfirmation = (texte: string): LigneProduit[] => {
+        const lignesConfirm: LigneProduit[] = [];
+        const textePlat = texte.replace(/\s+/g, ' ').trim();
+        const marqueur = 'PX UNIT.EURO MONTANT HT EURO';
+        const upper = textePlat.toUpperCase();
+        const startIndex = upper.indexOf(marqueur);
+        const texteLignes = startIndex >= 0 ? textePlat.slice(startIndex) : textePlat;
+
+        const arrondir2 = (valeur: number) =>
+          Math.round((valeur + Number.EPSILON) * 100) / 100;
+        const bruitDescription = /cher client|produits vous seront livr[ée]s|t[ée]l[ée]copie|t[ée]l[ée]phone|confirmation de commande/i;
+        const seuilMontantMax = totalHTFinal > 0
+          ? totalHTFinal * 2
+          : totalTTC > 0
+            ? totalTTC * 2
+            : 100000;
+
+        const prixPattern = '\\d{1,3}(?:\\s\\d{3})*,\\d{2}';
+        const refPattern = '[A-Z0-9][A-Z0-9+\\-\\.]{3,}';
+        const qtePattern = '\\d{1,3}(?:\\s\\d{3})*';
+        const itemPattern = new RegExp(
+          `(${refPattern})\\s+((?:(?!\\s${refPattern}\\s).)+?)\\s+(${qtePattern})\\s+(${prixPattern})(?:\\s+(${prixPattern}))?` +
+            `(?=\\s+${refPattern}\\s+|\\s+(?:SELON\\s+BAT|DECOR|LOGO|COLORIS|MODE\\s+DE\\s+RÈGLEMENT|TOTAL\\s+TTC|TVA|TOTAL\\s+HT|XXXXXX)|$)`,
+          'gi'
+        );
+        const refInterdits = new Set([
+          'QUANTITE',
+          'COMMANDEE',
+          'LIVREE',
+          'FACTUREE',
+          'SELON',
+          'DECOR',
+          'CLIENT',
+          'FACE',
+          'BLANC',
+          'TRANSPARENT',
+          'SANS',
+          'VENTE',
+          'MODE',
+          'REGLEMENT',
+          'CONDITIONS',
+          'LIVRAISON',
+          'IDENTIFICATION',
+          'TOTAL',
+          'TVA',
+        ]);
+
+        const lignesVues = new Set<string>();
+        const pousserLigne = (
+          montantHT: number,
+          ref: string,
+          quantite: number,
+          description: string,
+          prixUnitaireBrut?: number
+        ) => {
+          const refNettoye = ref.toUpperCase();
+          const refValide =
+            /\d/.test(refNettoye) || refNettoye.endsWith('AF') || refNettoye.startsWith('FT');
+          if (!refValide || refInterdits.has(refNettoye)) {
+            return;
+          }
+          const prixUnitaireHT = prixUnitaireBrut !== undefined
+            ? arrondir2(prixUnitaireBrut)
+            : quantite > 0
+              ? arrondir2(montantHT / quantite)
+              : 0;
+
+          const descNettoyee = description
+            .replace(/\b\d{1,3},\d{2}\b/g, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+
+          const cleLigne = `${refNettoye}|${quantite}|${montantHT}|${descNettoyee}`.toUpperCase();
+          if (lignesVues.has(cleLigne)) {
+            return;
+          }
+
+          if (
+            !descNettoyee ||
+            !isFinite(montantHT) ||
+            !isFinite(quantite) ||
+            quantite <= 0 ||
+            montantHT < 0 ||
+            montantHT > seuilMontantMax ||
+            prixUnitaireHT < 0 ||
+            prixUnitaireHT > 10000 ||
+            !/[A-Z]/.test(refNettoye) ||
+            refNettoye === 'XXXXXX' ||
+            quantite > 200000 ||
+            bruitDescription.test(descNettoyee)
+          ) {
+            return;
+          }
+
+          lignesVues.add(cleLigne);
+          lignesConfirm.push({
+            description: descNettoyee,
+            refFournisseur: refNettoye,
+            quantite,
+            prixUnitaireHT,
+            remise: 0,
+            montantHT: arrondir2(montantHT),
+          });
+        };
+
+        let match: RegExpExecArray | null;
+        while ((match = itemPattern.exec(texteLignes)) !== null) {
+          const ref = match[1].trim();
+          if (refInterdits.has(ref)) continue;
+          const description = match[2].trim();
+          const quantite = parseFloat(match[3].replace(/\s/g, '').replace(',', '.'));
+          const prix1 = parseFloat(match[4].replace(/\s/g, '').replace(',', '.'));
+          const prix2 = match[5] ? parseFloat(match[5].replace(/\s/g, '').replace(',', '.')) : undefined;
+          const montantHT = isFinite(prix2 as number) ? (prix2 as number) : prix1;
+          const prixUnitaireBrut = isFinite(prix2 as number) ? prix1 : undefined;
+
+          pousserLigne(montantHT, ref, quantite, description, prixUnitaireBrut);
+        }
+
+        return lignesConfirm;
+      };
+
+      const estConfirmation = /CONFIRMATION\s+DE\s+COMMANDE/i.test(textePDF);
+      const extraireSegmentsConfirmation = (pagesTexte: string[]): string[] => {
+        const segments: string[] = [];
+        const normaliser = (texte: string) => {
+          const sansAccents = texte
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '');
+          return sansAccents.replace(/\s+/g, ' ').replace(/’/g, "'").trim().toUpperCase();
+        };
+        const debutRegex = /CHER CLIENT,.*?INFLATION\.\s*/s;
+        const finRegex = /CES MARCHANDISES SONT VENDUES AVEC RESERVE DE PROPRIETE.*$/s;
+
+        for (const page of pagesTexte) {
+          const normalisee = normaliser(page);
+          const debutMatch = normalisee.match(debutRegex);
+          const finMatch = normalisee.match(finRegex);
+          if (debutMatch && finMatch) {
+            const debutIndex = (debutMatch.index || 0) + debutMatch[0].length;
+            const finIndex = finMatch.index || normalisee.length;
+            if (finIndex > debutIndex) {
+              const segment = normalisee.slice(debutIndex, finIndex).trim();
+              if (segment) {
+                segments.push(segment);
+              }
+            }
+          }
+        }
+
+        if (segments.length === 0) {
+          // Fallback: utiliser tout le texte si les marqueurs exacts ne sont pas trouvés
+          segments.push(normaliser(pagesTexte.join(' ')));
+        }
+
+        return segments;
+      };
+
+      if (estConfirmation) {
+        const segments = extraireSegmentsConfirmation(pages);
+        const lignesConfirm = segments.flatMap((segment) => parserLignesConfirmation(segment));
+        if (lignesConfirm.length > 0) {
+          console.log(`[LEHMANN] ${lignesConfirm.length} ligne(s) extraite(s) via confirmation de commande`);
+          lignes = lignesConfirm;
+        }
+      }
+
+      if (lignes.length === 0) {
+        // Extraire les lignes de chaque page (sauf la dernière qui contient les totaux finaux)
+        for (let pageIndex = 0; pageIndex < pages.length; pageIndex++) {
+          const pageTexte = pages[pageIndex];
+          const estDernierePage = pageIndex === pages.length - 1;
           
-          // Utiliser les références connues pour améliorer l'extraction de la section
-          const sectionAmelioree = ameliorerSectionAvecReferences(sectionLignes, referencesConnues);
+          // Pour chaque page, identifier la section des lignes de produits
+          // (en excluant les totaux partiels en bas de page)
+          const sectionLignes = extraireSectionLignesMultiPages(pageTexte, estDernierePage);
           
-          const lignesExtraites = parserLignesDepuisSection(
-            sectionAmelioree, 
-            nomFournisseur, 
-            referencesConnues, 
-            mapReferencesDescriptions
-          );
-          console.log(`[LEHMANN] ${lignesExtraites.length} ligne(s) extraite(s) de la page ${pageIndex + 1}`);
-          lignes.push(...lignesExtraites);
+          if (sectionLignes) {
+            console.log(`[LEHMANN] Section lignes extraite de la page ${pageIndex + 1} (${sectionLignes.length} caractères)`);
+            console.log(`[LEHMANN] Aperçu:`, sectionLignes.substring(0, 300));
+            
+            // Utiliser les références connues pour améliorer l'extraction de la section
+            const sectionAmelioree = ameliorerSectionAvecReferences(sectionLignes, referencesConnues);
+            
+            const lignesExtraites = parserLignesDepuisSection(
+              sectionAmelioree, 
+              nomFournisseur, 
+              referencesConnues, 
+              mapReferencesDescriptions
+            );
+            console.log(`[LEHMANN] ${lignesExtraites.length} ligne(s) extraite(s) de la page ${pageIndex + 1}`);
+            lignes.push(...lignesExtraites);
+          }
         }
       }
       
@@ -357,7 +530,7 @@ export const parserLehmann: Parser = {
         date,
         fichierPDF: nomFichier,
         lignes,
-        totalHT,
+        totalHT: totalHTFinal,
         totalTVA,
         totalTTC,
         dateImport: new Date(),

@@ -6,6 +6,7 @@
 import { parserRBDrinks } from './rb-drinks';
 import { parserLehmann } from './lehmann';
 import { parserItalesse } from './italesse';
+import { parserRetif } from './retif';
 import { parserStem } from './stem';
 import { parserSantisteban } from './santisteban';
 import type { Parser, ParserResult } from './types';
@@ -21,6 +22,7 @@ export const parseurs: Record<Fournisseur, Parser> = {
   'RB DRINKS': parserRBDrinks,
   LEHMANN: parserLehmann,
   ITALESSE: parserItalesse,
+  RETIF: parserRetif,
   STEM: parserStem,
   SANTISTEBAN: parserSantisteban,
 };
@@ -180,6 +182,9 @@ export function detecterFournisseur(chemin: string): Fournisseur | null {
     (cheminNormalise.includes('VELA') && !cheminNormalise.includes('LEHMANN'))
   ) {
     return 'ITALESSE';
+  }
+  if (cheminNormalise.includes('RETIF')) {
+    return 'RETIF';
   }
   if (cheminNormalise.includes('RB DRINKS')) {
     return 'RB DRINKS';
